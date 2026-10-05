@@ -8,8 +8,11 @@ st.set_page_config(page_title="Tasuqqilt", layout="wide")
 st.title("Tasuqqilt 🇩🇿")
 st.subheader("مترجم الأمازيغية المعيارية الصارم")
 
-# إدخال مفتاح الـ API بشكل آمن في الواجهة
-api_key = st.sidebar.text_input("أدخل مفتاح Google API الخاص بك:", type="password")
+# جلب مفتاح الـ API تلقائياً وبشكل سري من إعدادات المنصة دون إظهاره للمستخدم
+if "GEMINI_API_KEY" in st.secrets:
+    api_key = st.secrets["GEMINI_API_KEY"]
+else:
+    api_key = st.sidebar.text_input("أدخل مفتاح Google API الخاص بك:", type="password")
 
 # اختيار وضع الترجمة لتغيير درجة الحرارة ديناميكياً
 mode = st.sidebar.radio(
@@ -46,14 +49,14 @@ text_to_translate = st.text_area("أدخل البرقية المراد ترجم�
 
 if st.button("بدء الترجمة الاحترافية"):
     if not api_key:
-        st.error("⚠️ يرجى إدخال مفتاح Google API في القائمة الجانبية لتفعيل المترجم.")
+        st.error("⚠️ يرجى إدخال مفتاح Google API لتفعيل المترجم.")
     elif not context_data and not os.path.exists("database.docx"):
         st.error("⚠️ لم يتم العثور على ملف 'database.docx' في المجلد. يرجى إضافته.")
     else:
         try:
             genai.configure(api_key=api_key)
             
-            system_prompt = f"""أنت مترجم رسمي لوكالة الأنباء الجزائرية. 
+            system_prompt = f"""أنت مترجم رسمي للغة الأمازيغية المعيارية الصرفة. 
             لديك ملف مرجعي يحتوي على نصوص وقواعد باللغة الأمازيغية المعيارية الصرفة بالحرف اللاتيني.
             السياق المرجعي المتاح لك هو:
             ---
