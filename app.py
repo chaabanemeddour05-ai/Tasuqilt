@@ -11,7 +11,6 @@ st.subheader("مترجم الأمازيغية المعيارية الصارم")
 # جلب مفتاح الـ API تلقائياً وبشكل سري من إعدادات المنصة
 if "GEMINI_API_KEY" in st.secrets:
     raw_key = st.secrets["GEMINI_API_KEY"]
-    # تنظيف المفتاح من أي زيادات أو علامات تنصيص زائدة قد تحدث أثناء اللصق
     api_key = raw_key.replace('"', '').replace("'", "").strip()
 else:
     api_key = st.sidebar.text_input("أدخل مفتاح Google API الخاص بك:", type="password")
@@ -56,22 +55,20 @@ if st.button("بدء الترجمة الاحترافية"):
         st.error("⚠️ لم يتم العثور على ملف 'database.docx' في المجلد. يرجى إضافته.")
     else:
         try:
-            # إعداد الاتصال بالذكاء الاصطناعي باستخدام المفتاح النظيف
-           genai.configure(api_key=api_key)
+            # إعداد الاتصال بالذكاء الاصطناعي باستخدام المفتاح النظيف والمحاذاة الصحيحة
+            genai.configure(api_key=api_key)
             
             system_prompt = f"""أنت مترجم رسمي للغة الأمازيغية المعيارية الصرفة. 
-            لديك ملف مرجعي يحتوي على نصوص وقواعد باللغة الأمازيغية المعيارية الصرفة بالحرف اللاتيني.
-            السياق المرجعي المتاح لك هو:
-            ---
-            {context_data[:15000]}
-            ---
-            تعليمات الصياغة الحالية: {mode_instruction}
-            التزم تماماً بالقواعد والأسلوب المتبع في المرجع المرفق، ولا تبتكر تعبيرات خارجة عن هذا النطاق."""
+لديك ملف مرجعي يحتوي على نصوص وقواعد باللغة الأمازيغية المعيارية الصرفة بالحرف اللاتيني.
+السياق المرجعي المتاح لك هو:
+---
+{context_data[:15000]}
+---
+تعليمات الصياغة الحالية: {mode_instruction}
+التزم تماماً بالقواعد والأسلوب المتبع في المرجع المرفق، ولا تبتكر تعبيرات خارجة عن هذا النطاق."""
             
             model = genai.GenerativeModel(
-               model_name="gemini-3.8-flash",
-
-
+                model_name="gemini-3.8-flash",
                 generation_config={"temperature": chosen_temp},
                 system_instruction=system_prompt
             )
