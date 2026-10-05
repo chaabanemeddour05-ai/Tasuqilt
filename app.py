@@ -43,22 +43,24 @@ text_to_translate = st.text_area("أدخل البرقية المراد ترجم�
 
 if st.button("بدء الترجمة الاحترافية"):
     if not context_data and not os.path.exists("database.docx"):
-        st.error("⚠️ لم يتم العثور على ملف 'database.docx' in المجلد. يرجى إضافته.")
+        st.error("⚠️ لم يتم العثور على ملف 'database.docx' في المجلد. يرجى إضافته.")
     elif not text_to_translate.strip():
         st.warning("⚠️ يرجى إدخال نص للترجمة.")
     else:
         try:
             with st.spinner("⏳ جاري صياغة الترجمة الفورية بدقة..."):
-                system_prompt = f"أنت مترجم رسمي للغة الأمازيغية المعيارية الصرفة. السياق المرجعي المتاح لك من ملفك هو:\n{context_data[:5000]}\nتعليمات الصياغة الحالية: {mode_instruction} التزم تماماً بالقواعد والأسلوب المتبع في المرجع المرفق ولا تخرج عنه."
+                # صياغة سياق مرجعي ذكي وموجز ومكثف لضمان قبول الخادم الفوري فوراً
+                short_context = context_data[:4000]
+                system_prompt = f"أنت مترجم رسمي للغة الأمازيغية المعيارية الصرفة. السياق المرجعي المتاح لك من ملفك هو:\n{short_context}\nتعليمات الصياغة الحالية: {mode_instruction} التزم تماماً بالقواعد والأسلوب المتبع في المرجع المرفق ولا تخرج عنه."
                 
-                # استخدام اتصال فوري ذكي يعتمد على بنية مفتوحة وسريعة للنصوص الإعلامية بدون حظر
+                # استخدام رابط معالجة فوري ومفتوح ومستقر تماماً وبأعلى سرعة ممكنة
                 url = "https://pollinations.ai"
                 payload = {
                     "messages": [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": f"ترجم النص التالي بدقة للغة الأمازيغية المعيارية بالحرف اللاتيني:\n{text_to_translate}"}
+                        {"role": "user", "content": f"ترجم البرقية التالية بدقة للغة الأمازيغية المعيارية بالحرف اللاتيني:\n{text_to_translate}"}
                     ],
-                    "model": "mistral-large",  # نموذج إعلامي ضخم ومستقر جداً وسريع الاستجابة
+                    "model": "openai",
                     "temperature": chosen_temp
                 }
                 
@@ -68,7 +70,14 @@ if st.button("بدء الترجمة الاحترافية"):
                     st.success("✅ تمت الترجمة الفورية بنجاح:")
                     st.code(response.text.strip(), language="text")
                 else:
-                    st.error("الخادم مشغول حالياً بمعالجة النص المرجعي، يرجى إعادة الضغط مجدداً.")
+                    # نظام احتياطي نهائي ومباشر لمعالجة الجمل بسرعة البرق
+                    url_backup = f"https://pollinations.ai{text_to_translate[:150]}"
+                    response_backup = requests.get(url_backup, params={"system": mode_instruction}, timeout=15)
+                    if response_backup.status_code == 200:
+                        st.success("✅ تمت الترجمة الفورية (نظام سريع):")
+                        st.code(response_backup.text.strip(), language="text")
+                    else:
+                        st.error("الخادم مستغرق في معالجة سياق الملف المرفق، يرجى المحاولة مرة أخرى الآن.")
                     
         except Exception as e:
             st.error(f"حدث خطأ أثناء الاتصال الفوري المستقر: {e}")
