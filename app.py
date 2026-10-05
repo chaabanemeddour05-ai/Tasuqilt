@@ -8,9 +8,11 @@ st.set_page_config(page_title="Tasuqqilt", layout="wide")
 st.title("Tasuqqilt 🇩🇿")
 st.subheader("مترجم الأمازيغية المعيارية الصارم")
 
-# جلب مفتاح الـ API تلقائياً وبشكل سري من إعدادات المنصة دون إظهاره للمستخدم
+# جلب مفتاح الـ API تلقائياً وبشكل سري من إعدادات المنصة
 if "GEMINI_API_KEY" in st.secrets:
-    api_key = st.secrets["GEMINI_API_KEY"]
+    raw_key = st.secrets["GEMINI_API_KEY"]
+    # تنظيف المفتاح من أي زيادات أو علامات تنصيص زائدة قد تحدث أثناء اللصق
+    api_key = raw_key.replace('"', '').replace("'", "").strip()
 else:
     api_key = st.sidebar.text_input("أدخل مفتاح Google API الخاص بك:", type="password")
 
@@ -28,7 +30,7 @@ else:
     chosen_temp = 0.7
     mode_instruction = "يمكنك صياغة الأمازيغية بمرونة وجمالية لتلائم الأسلوب الأدبي والثقافي."
 
-# قراءة قواميس الأمازيغية من ملف الوورد الصغير المرفق في المجلد
+# قراءة قواميس الأمازيغية من ملف الوورد المرفق في المجلد
 @st.cache_data
 def load_tamazight_context():
     file_name = "database.docx"
@@ -54,6 +56,7 @@ if st.button("بدء الترجمة الاحترافية"):
         st.error("⚠️ لم يتم العثور على ملف 'database.docx' في المجلد. يرجى إضافته.")
     else:
         try:
+            # إعداد الاتصال بالذكاء الاصطناعي باستخدام المفتاح النظيف
             genai.configure(api_key=api_key)
             
             system_prompt = f"""أنت مترجم رسمي للغة الأمازيغية المعيارية الصرفة. 
