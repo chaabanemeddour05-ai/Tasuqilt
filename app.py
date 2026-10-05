@@ -57,7 +57,7 @@ if st.button("بدء الترجمة الاحترافية"):
     else:
         try:
             # إعداد الاتصال بالذكاء الاصطناعي باستخدام المفتاح النظيف
-            genai.configure(api_key=api_key)
+           genai.configure(api_key=api_key)
             
             system_prompt = f"""أنت مترجم رسمي للغة الأمازيغية المعيارية الصرفة. 
             لديك ملف مرجعي يحتوي على نصوص وقواعد باللغة الأمازيغية المعيارية الصرفة بالحرف اللاتيني.
@@ -69,7 +69,8 @@ if st.button("بدء الترجمة الاحترافية"):
             التزم تماماً بالقواعد والأسلوب المتبع في المرجع المرفق، ولا تبتكر تعبيرات خارجة عن هذا النطاق."""
             
             model = genai.GenerativeModel(
-                model_name="gemini-2.5-flash",
+               model_name="gemini-3.8-flash",
+
 
                 generation_config={"temperature": chosen_temp},
                 system_instruction=system_prompt
