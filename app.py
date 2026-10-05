@@ -49,26 +49,22 @@ if st.button("بدء الترجمة الاحترافية"):
     else:
         try:
             with st.spinner("⏳ جاري صياغة الترجمة الفورية بدقة..."):
-                system_prompt = f"أنت مترجم رسمي للغة الأمازيغية المعيارية الصرفة. السياق المرجعي المتاح لك من ملفك هو:\n{context_data[:8000]}\nتعليمات الصياغة الحالية: {mode_instruction} التزم تماماً بالقواعد والأسلوب المتبع في المرجع المرفق ولا تخرج عنه."
+                system_prompt = f"أنت مترجم رسمي للغة الأمازيغية المعيارية الصرفة. السياق المرجعي المتاح لك من ملفك هو:\n{context_data[:5000]}\nتعليمات الصياغة الحالية: {mode_instruction} التزم تماماً بالقواعد والأسلوب المتبع في المرجع المرفق ولا تخرج عنه."
                 
-                # استخدام خادم إطلاق فوري متطور وخفيف يتجاوز قيود غوغل المعقدة
-                url = "https://pollinations.ai"
-                payload = {
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": text_to_translate}
-                    ],
-                    "model": "openai",
+                # استخدام خادم فوري فائق السرعة ومفتوح وبدون قيود
+                url = f"https://pollinations.ai{text_to_translate}"
+                params = {
+                    "system": system_prompt,
                     "temperature": chosen_temp
                 }
                 
-                response = requests.post(url, json=payload, timeout=30)
+                response = requests.get(url, params=params, timeout=30)
                 
-                if response.status_code == 200:
+                if response.status_code == 200 and response.text.strip():
                     st.success("✅ تمت الترجمة الفورية بنجاح:")
-                    st.code(response.text, language="text")
+                    st.code(response.text.strip(), language="text")
                 else:
-                    st.error(f"عذراً، الخادم مشغول حالياً، يرجى المحاولة مرة أخرى.")
+                    st.error("عذراً، يرجى المحاولة مرة أخرى سريعا.")
                     
         except Exception as e:
             st.error(f"حدث خطأ أثناء الاتصال الفوري: {e}")
