@@ -51,20 +51,24 @@ if st.button("بدء الترجمة الاحترافية"):
             with st.spinner("⏳ جاري صياغة الترجمة الفورية بدقة..."):
                 system_prompt = f"أنت مترجم رسمي للغة الأمازيغية المعيارية الصرفة. السياق المرجعي المتاح لك من ملفك هو:\n{context_data[:5000]}\nتعليمات الصياغة الحالية: {mode_instruction} التزم تماماً بالقواعد والأسلوب المتبع في المرجع المرفق ولا تخرج عنه."
                 
-                # استخدام خادم فوري فائق السرعة ومفتوح وبدون قيود
-                url = f"https://pollinations.ai{text_to_translate}"
-                params = {
-                    "system": system_prompt,
+                # استخدام اتصال مشفر وآمن للنصوص الطويلة والمعقدة
+                url = "https://pollinations.ai"
+                payload = {
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": text_to_translate}
+                    ],
+                    "model": "searchgpt", # نموذج متطور للغاية وسريع وخفيف للبرقيات الإخبارية
                     "temperature": chosen_temp
                 }
                 
-                response = requests.get(url, params=params, timeout=30)
+                response = requests.post(url, json=payload, timeout=30)
                 
                 if response.status_code == 200 and response.text.strip():
                     st.success("✅ تمت الترجمة الفورية بنجاح:")
                     st.code(response.text.strip(), language="text")
                 else:
-                    st.error("عذراً، يرجى المحاولة مرة أخرى سريعا.")
+                    st.error("عذراً، الخادم بحاجة لإعادة إرسال الطلب، يرجى المحاولة مرة أخرى.")
                     
         except Exception as e:
             st.error(f"حدث خطأ أثناء الاتصال الفوري: {e}")
