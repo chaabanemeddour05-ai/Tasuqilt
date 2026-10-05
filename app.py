@@ -3,9 +3,9 @@ import google.generativeai as genai
 from docx import Document
 import os
 
-st.set_page_config(page_title="مترجم وكالة الأنباء الجزائرية", layout="wide")
+st.set_page_config(page_title="Tasuqqilt", layout="wide")
 
-st.title("منصة ترجمة وكالة الأنباء الجزائرية (APS) 🇩🇿")
+st.title("Tasuqqilt 🇩🇿")
 st.subheader("مترجم الأمازيغية المعيارية الصارم")
 
 # إدخال مفتاح الـ API بشكل آمن في الواجهة
