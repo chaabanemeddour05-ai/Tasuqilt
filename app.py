@@ -69,7 +69,8 @@ if st.button("بدء الترجمة الاحترافية"):
             التزم تماماً بالقواعد والأسلوب المتبع في المرجع المرفق، ولا تبتكر تعبيرات خارجة عن هذا النطاق."""
             
             model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash",
+                model_name="gemini-2.5-flash",
+
                 generation_config={"temperature": chosen_temp},
                 system_instruction=system_prompt
             )
