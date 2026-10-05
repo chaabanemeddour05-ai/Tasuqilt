@@ -43,7 +43,7 @@ text_to_translate = st.text_area("أدخل البرقية المراد ترجم�
 
 if st.button("بدء الترجمة الاحترافية"):
     if not context_data and not os.path.exists("database.docx"):
-        st.error("⚠️ لم يتم العثور على ملف 'database.docx' في المجلد. يرجى إضافته.")
+        st.error("⚠️ لم يتم العثور على ملف 'database.docx' in المجلد. يرجى إضافته.")
     elif not text_to_translate.strip():
         st.warning("⚠️ يرجى إدخال نص للترجمة.")
     else:
@@ -51,14 +51,14 @@ if st.button("بدء الترجمة الاحترافية"):
             with st.spinner("⏳ جاري صياغة الترجمة الفورية بدقة..."):
                 system_prompt = f"أنت مترجم رسمي للغة الأمازيغية المعيارية الصرفة. السياق المرجعي المتاح لك من ملفك هو:\n{context_data[:5000]}\nتعليمات الصياغة الحالية: {mode_instruction} التزم تماماً بالقواعد والأسلوب المتبع في المرجع المرفق ولا تخرج عنه."
                 
-                # استخدام اتصال مشفر وآمن للنصوص الطويلة والمعقدة
+                # استخدام اتصال فوري ذكي يعتمد على بنية مفتوحة وسريعة للنصوص الإعلامية بدون حظر
                 url = "https://pollinations.ai"
                 payload = {
                     "messages": [
                         {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": text_to_translate}
+                        {"role": "user", "content": f"ترجم النص التالي بدقة للغة الأمازيغية المعيارية بالحرف اللاتيني:\n{text_to_translate}"}
                     ],
-                    "model": "searchgpt", # نموذج متطور للغاية وسريع وخفيف للبرقيات الإخبارية
+                    "model": "mistral-large",  # نموذج إعلامي ضخم ومستقر جداً وسريع الاستجابة
                     "temperature": chosen_temp
                 }
                 
@@ -68,7 +68,7 @@ if st.button("بدء الترجمة الاحترافية"):
                     st.success("✅ تمت الترجمة الفورية بنجاح:")
                     st.code(response.text.strip(), language="text")
                 else:
-                    st.error("عذراً، الخادم بحاجة لإعادة إرسال الطلب، يرجى المحاولة مرة أخرى.")
+                    st.error("الخادم مشغول حالياً بمعالجة النص المرجعي، يرجى إعادة الضغط مجدداً.")
                     
         except Exception as e:
-            st.error(f"حدث خطأ أثناء الاتصال الفوري: {e}")
+            st.error(f"حدث خطأ أثناء الاتصال الفوري المستقر: {e}")
