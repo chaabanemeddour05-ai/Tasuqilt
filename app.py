@@ -70,9 +70,16 @@ if st.button("بدء الترجمة الاحترافية"):
                     st.success("✅ تمت الترجمة الفورية بنجاح:")
                     st.code(response.text.strip(), language="text")
                 else:
-                    # نظام احتياطي نهائي ومباشر لمعالجة الجمل بسرعة البرق
-                    url_backup = f"https://pollinations.ai{text_to_translate[:150]}"
-                    response_backup = requests.get(url_backup, params={"system": mode_instruction}, timeout=15)
+                    # نظام احتياطي مصحح ومفصول برمجياً بشكل سليم لمنع تداخل النصوص مع الروابط
+                    url_backup = "https://pollinations.ai"
+                    payload_backup = {
+                        "messages": [
+                            {"role": "system", "content": mode_instruction},
+                            {"role": "user", "content": text_to_translate}
+                        ],
+                        "model": "openai"
+                    }
+                    response_backup = requests.post(url_backup, json=payload_backup, timeout=15)
                     if response_backup.status_code == 200:
                         st.success("✅ تمت الترجمة الفورية (نظام سريع):")
                         st.code(response_backup.text.strip(), language="text")
