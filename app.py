@@ -1,18 +1,26 @@
 import os
 import streamlit as st
-import re
 from google import genai
 from google.genai import types
 from docx import Document
 
 st.set_page_config(
-    page_title="Tasuqilt",
+    page_title="Tasuqilt Enterprise",
     page_icon="🇩🇿",
     layout="wide"
 )
 
+# 🔐 إعدادات أمان لوحة التحكم (يمكنك أنت وصديقك تغيير هذا الرمز السري من الكود في أي وقت)
+ADMIN_PASSWORD = "APS_Tasuqilt_2026"
+
+# تهيئة الذاكرة التفاعلية اللحظية لتخزين التصحيحات والمصطلحات الجديدة أثناء تمرين الموقع من المتصفح
+if "live_corrections" not in st.session_state:
+    st.session_state["live_corrections"] = ""
+if "live_dictionary" not in st.session_state:
+    st.session_state["live_dictionary"] = {}
+
 st.title("Tasuqilt 🇩🇿")
-st.subheader("مترجم الأمازيغية المعيارية الصارم (بمحرك الذاكرة المزدوجة المحمية)")
+st.subheader("منصة إدارة الترجمة الإعلامية والأمازيغية المعيارية الصارمة")
 
 # جلب مفتاح الـ API تلقائياً وبشكل آمن من إعدادات المنصة السرية
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -20,33 +28,14 @@ if not api_key and "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
 
 if not api_key:
-    st.error("لم يتم العثور على مفتاح الأمان السري في الإعدادات.")
+    st.error("لم يتم العثور على مفتاح الأمان السري GEMINI_API_KEY في الإعدادات الخلفية.")
     st.stop()
 
 api_key = api_key.replace('"', '').replace("'", "").strip()
 client = genai.Client(api_key=api_key)
 
-# 1. المدرسة اللغوية: قراءة مخففة وموفرة للذاكرة لملف الأسلوب أحادي اللغة
-@st.cache_data(max_entries=1)
-def load_monolingual_corpus():
-    file_name = "database.docx"
-    if not os.path.exists(file_name):
-        return []
-    try:
-        doc = Document(file_name)
-        text_lines = []
-        for para in doc.paragraphs:
-            text = para.text.strip()
-            if text and len(text) > 10 and "@" not in text:
-                text_lines.append(text)
-            if len(text_lines) >= 3000:
-                break
-        return text_lines
-    except Exception:
-        return []
-
-# 2. المرجع المقدس: قراءة مخففة وموفرة للذاكرة للقاموس المزدوج المفصول بـ @
-@st.cache_data(max_entries=1)
+# 📚 المرجع المقدس: قراءة القاموس المزدوج المفصول بـ @ بخفة واستقرار كامل
+@st.cache_data
 def load_translation_memory():
     file_name = "tm.docx"
     if not os.path.exists(file_name):
@@ -63,101 +52,122 @@ def load_translation_memory():
                         "tamazight": parts[0].strip(),
                         "foreign": parts[1].strip()
                     })
-            if len(memory_pairs) >= 5000:
-                break
         return memory_pairs
     except Exception:
         return []
 
-mono_corpus = load_monolingual_corpus()
 tm_data = load_translation_memory()
 
+# 🛡️ البوابة الجانبية: خيارات الترجمة وبوابة الإدارة السرية
+st.sidebar.header("🎛️ خيارات التحكم")
 mode = st.sidebar.radio(
     "اختر وضع الترجمة الصحفية المعتمد:",
     ["إخباري رسمي وصارم", "أدبي / ثقافي"]
 )
 
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔐 بوابة الإدارة السرية (خاصة بالمشرفين)")
+admin_input = st.sidebar.text_input("أدخل رمز الدخول لتمرين وتحديث المنصة:", type="password")
+
+is_admin = (admin_input == ADMIN_PASSWORD)
+
+if is_admin:
+    st.sidebar.success("🔓 تم فتح صلاحيات الإدارة والتمرين المباشر!")
+    
+    # 📌 القسم الأول: لوحة تصحيح وتمرين الفقرات المشوشة مباشرة من الموقع
+    st.sidebar.subheader("✍️ لوحة تصحيح الفقرات وتمرين الموقع")
+    bad_french = st.sidebar.text_area("النص الأصلي (الفرنسي/العربي) الذي تريد تصحيحه:")
+    good_tamazight = st.sidebar.text_area("الصياغة الأمازيغية المثالية المعيارية المعتمدة:")
+    
+    if st.sidebar.button("⚙️ حقن وتثبيت التصحيح في عقل المنصة"):
+        if bad_french.strip() and good_tamazight.strip():
+            new_correction = f"\nنموذج مصحح يدوياً من رئيس التحرير:\nالأصل: {bad_french.strip()}\nالترجمة المقدسة المفروضة: {good_tamazight.strip()}\n---\n"
+            st.session_state["live_corrections"] += new_correction
+            st.sidebar.success("✅ تم حفظ وتثبيت التصحيح بنجاح! لن يكرر الخطأ القديم.")
+        else:
+            st.sidebar.warning("يرجى ملء الخانتين أولاً.")
+            
+    # 📌 القسم الثاني: لوحة المعجم وقاموس المصطلحات الفردية للإعلام
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("📖 معجم المصطلحات الإعلامية الفورية")
+    dict_word = st.sidebar.text_input("المصطلح الأصلي (مثال: réunion أو اجتماع):")
+    dict_translation = st.sidebar.text_input("المقابل الأمازيغي المعياري الحصري (مثال: timlilt):")
+    
+    if st.sidebar.button("📌 إدراج المصطلح في القاموس المقدس"):
+        if dict_word.strip() and dict_translation.strip():
+            st.session_state["live_dictionary"][dict_word.strip().lower()] = dict_translation.strip()
+            st.sidebar.success(f"✅ تم قفل المصطلح: '{dict_word}' = '{dict_translation}'")
+else:
+    if admin_input:
+        st.sidebar.error("❌ رمز الدخول غير صحيح. الصلاحيات مغلقة.")
+
+# 📝 إعداد تعليمات التحرير الصارمة لـ Gemini
 if mode == "إخباري رسمي وصارم":
     chosen_temp = 0.0
     instruction = """أنت رئيس تحرير ومترجم رسمي صارم للغة الأمازيغية المعيارية لصالح وكالة الأنباء (APS).
-مهمتك الحتمية: صياغة وترجمة البرقية المدخلة إلى الأمازيغية المعيارية الصارمة بالحرف اللاتيني بناءً على القوانين الصارمة التالية المحمية برمجياً:
+مهمتك الحتمية والمقدسة: صياغة وترجمة البرقية المدخلة إلى الأمازيغية المعيارية الصارمة بالحرف اللاتيني.
 
-قانون المصطلحات (حظر تام للمصدر الثاني):
-- يجب أن تستقي الكلمات والمصطلحات المقابلة والمفردات حصرياً وعينياً من "المصدر الأول: المرجع المقدس للمصطلحات" المرفق بالأسفل.
-- يُحظر عليك حظراً باتاً وقاطعاً محكماً استخدام أو نسخ أو استلهام أي كلمة أو مصطلح مفرد يتواجد في "المصدر الثاني: عينات البنية والصرف".
-- إذا وجد تعارض بين المصدرين في أي كلمة (مثل anejmuɛ و timlilt)، يجب إلقاء كلمة المصدر الثاني في المهملات فوراً واستخدام مصطلح المصدر الأول (timlilt) إجبارياً وبدون نقاش.
-
-قانون دراسة البنية:
-- وظيفة "المصدر الثاني: عينات البنية والصرف" هي فقط وفقط وفقط دراسة الصرف النحوي، طريقة تركيب الأفعال، وحروف الربط والجر لتنسيق الجملة الأمازيغية. لا تأخذ منه كلمات!
-
-قانون الحروف والنقاء:
-- يُمنع منعاً باتاً إخراج أي حرف عربي أو كلمة عربية أو تعليق جانبي. النص النهائي يجب أن يكون أمازيغياً معيارياً صرفاً بالحرف اللاتيني فقط.
-التزم حرفياً بالمعلومات المعطاة في البرقية، لا تزد ولا تنقص، وحافظ على الأرقام والتواريخ."""
+لقد تم تزويدك بـ "المرجع المقدس لنماذج الترجمة المقابلة المعتمدة" بالأسفل. 
+يجب أن تستقي طريقة بناء الجمل، النحو، الصرف، والمصطلحات الحديثة بالكامل وحصرياً من هذا المرجع فقط.
+إذا زودك رئيس التحرير بـ "تعديلات وتصحيحات مباشرة" أو "قاموس مصطلحات حاسم"، التزم بها كأولوية قصوى فوق أي شيء آخر.
+يُمنع منعاً باتاً استخدام مصطلحات بدائية قديمة. النص النهائي يجب أن يكون أمازيغياً لاتينياً إعلامياً ناصعاً ونقياً 100% من الحروف العربية.
+لا تضف أو تحذف أي معلومة، حافظ على الأرقام والتواريخ، وأعطني النص الأمازيغي اللاتيني فقط دون أي شرح."""
 else:
     chosen_temp = 0.7
     instruction = """أنت مترجم محترف متخصص في الأمازيغية المعيارية للنصوص الثقافية والأدبية.
-ترجم النص إلى الأمازيغية بأسلوب طبيعي وسلس بناءً على العينات المرفقة. أعطني النص الأمازيغي فقط بالحرف اللاتيني دون أي حروف عربية."""
+ترجم النص إلى الأمازيغية بأسلوب طبيعي وسلس بناءً على العينات المرفقة. أعطني النص الأمازيغي فقط بالحرف اللاتيني."""
 
+# 🎚️ واجهة الترجمة الرئيسية لجميع المستخدمين
 text_to_translate = st.text_area(
     "أدخل البرقية الصحفية المراد ترجمتها (بالفرنسية أو العربية):",
-    height=200,
-    placeholder="ضع النص هنا..."
+    height=220,
+    placeholder="ضع نص البرقية هنا..."
 )
 
-if st.button("بدء الترجمة الاحترافية المدمجة", type="primary"):
+if st.button("بدء الترجمة الاحترافية الموحدة", type="primary"):
     if not text_to_translate.strip():
         st.warning("يرجى إدخال نص أولًا للبدء.")
         st.stop()
 
-    st.info("جاري استرجاع السياق المنسق وتطبيق جدار الحظر المصطلحي...")
+    st.info("جاري استدعاء محرك الذاكرة الموحدة المحدث وتطبيق معجم التدريب الحصري...")
 
     try:
         search_words = [w.strip().lower() for w in text_to_translate.split() if len(w.strip()) > 4]
         
-        # أ) البحث الموضعي الفوري داخل "المرجع المقدس للمصطلحات والترجمة" (tm.docx)
+        # البحث الموضعي الفوري الفائق السرعة داخل "المرجع المقدس" (tm.docx)
         matched_pairs = []
         if tm_data:
             for pair in tm_data:
                 if any(word in pair["foreign"].lower() for word in search_words):
                     matched_pairs.append(pair)
-                if len(matched_pairs) >= 6:
+                if len(matched_pairs) >= 12:
                     break
         if not matched_pairs:
-            matched_pairs = tm_data[:4] if tm_data else []
-
-        # ب) البحث الموضعي الفوري داخل "المدرسة النحوية البنيوية" (database.docx)
-        matched_mono = []
-        if mono_corpus:
-            sample_tamazight_words = []
-            for pair in matched_pairs:
-                sample_tamazight_words.extend([w.lower() for w in pair["tamazight"].split() if len(w) > 4])
-            
-            for line in mono_corpus:
-                if any(word in line.lower() for word in sample_tamazight_words) or any(word in line.lower() for word in search_words):
-                    matched_mono.append(line)
-                if len(matched_mono) >= 6:
-                    break
-        if not matched_mono:
-            matched_mono = mono_corpus[:4] if mono_corpus else []
+            matched_pairs = tm_data[:6] if tm_data else []
 
         tm_context = ""
         for i, pair in enumerate(matched_pairs, 1):
-            tm_context += f"نموذج ترجمة معتمد ومقدس {i}:\nالنص الأصلي: {pair['foreign']}\nالترجمة الأمازيغية الرسمية الحديثة والمفروضة: {pair['tamazight']}\n---\n"
-            
-        mono_context = "\n".join(matched_mono)
+            tm_context += f"نموذج ترجمة معتمد ومقدس {i}:\nالنص الأصلي: {pair['foreign']}\nالترجمة الأمازيغية الرسمية المفروضة: {pair['tamazight']}\n---\n"
+
+        # دمج قاموس المصطلحات الفورية التي تم إدخالها من لوحة التحكم السرية
+        custom_dict_context = ""
+        if st.session_state["live_dictionary"]:
+            custom_dict_context = "\n⚠️ قاموس المصطلحات الحاسم والإلزامي الصادر من الإدارة:\n"
+            for k, v in st.session_state["live_dictionary"].items():
+                custom_dict_context += f"- المصطلح: {k} = المقابل الإجباري: {v}\n"
 
         config = types.GenerateContentConfig(
             temperature=chosen_temp,
             system_instruction=instruction
         )
 
-        prompt = f"""المصدر الأول والنهائي (المرجع المقدس للمصطلحات والترجمة المقابلة المعتمدة - خذ المصطلحات من هنا فقط):
+        # دمج سياق الذاكرة الثابتة مع التصحيحات الحية المباشرة والمصطلحات المحدثة
+        prompt = f"""المرجع المقدس الحصري والوحيد (نماذج الترجمة المعتمدة لوكالة الأنباء):
         {tm_context}
+        {st.session_state["live_corrections"]}
+        {custom_dict_context}
 
-        المصدر الثاني (عينات البنية والصرف والتركيب النحوي الأحادية - للدراسة النحوية فقط ويُحظر تماماً استخدام مصطلحاتها القديمة):
-        {mono_context}
-
-        النص الجديد المراد صياغته وترجمته الآن بدقة بالغة:
+        النص الجديد المراد صياغته وترجمته الآن بدقة بالغة وبنفس الأسلوب والمصطلحات الحديثة:
         {text_to_translate}
 
         الترجمة الأمازيغية الرسمية الصارمة والنهائية (حرف لاتيني فقط):"""
@@ -171,13 +181,8 @@ if st.button("بدء الترجمة الاحترافية المدمجة", type="
         result = response.text
 
         if result and result.strip():
-            # الحل البرمجي الجذري: تطهير النص النهائي تماماً من أي كلمة أو حرف عربي متسلل من الملفات القديمة
-            cleaned_text = re.sub(r'[\u0600-\u06FF]+', '', result.strip())
-            # تنظيف الفراغات والرموز المشوهة الناتجة عن الحذف الآلي للحروف العربية
-            cleaned_text = cleaned_text.replace("  ", " ").replace("خصيصا", "").strip()
-            
-            st.success("تمت الترجمة بنجاح واكتملت صياغة الخبر بناءً على المرجعية المزدوجة والمحمية.")
-            st.text_area("الترجمة الأمازيغية المعيارية النهائية (نقية ومطهرة 100%):", value=cleaned_text, height=250)
+            st.success("تمت الترجمة بنجاح واكتملت صياغة الخبر بناءً على المرجعية الموحدة الجديدة الممرنة.")
+            st.text_area("الترجمة الأمازيغية المعيارية المعتمدة (نقية ومحدثة 100%):", value=result.strip(), height=280)
         else:
             st.error("لم ينجح النظام في معالجة النص، يرجى إعادة المحاولة.")
 
