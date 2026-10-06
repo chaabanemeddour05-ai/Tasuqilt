@@ -10,115 +10,162 @@ st.set_page_config(
 )
 
 st.title("Tasuqilt 🇩🇿")
-st.subheader("مترجم الأمازيغية المعيارية الفوري والصارم")
+st.subheader("مترجم الأمازيغية المعيارية الصارم (بمحرك الذاكرة المزدوجة المتكاملة)")
 
-# جلب مفتاح الـ API تلقائياً وبشكل آمن من إعدادات المنصة
+# جلب مفتاح الـ API تلقائياً وبشكل آمن من إعدادات المنصة السرية
 api_key = os.environ.get("GEMINI_API_KEY")
+if not api_key and "GEMINI_API_KEY" in st.secrets:
+    api_key = st.secrets["GEMINI_API_KEY"]
 
 if not api_key:
-    # محاولة جلبها من إعدادات سريمليت السرية الاحتياطية إذا لم تكن في البيئة
-    if "GEMINI_API_KEY" in st.secrets:
-        api_key = st.secrets["GEMINI_API_KEY"]
-    else:
-        st.error("لم يتم العثور على GEMINI_API_KEY في Streamlit Secrets.")
-        st.stop()
+    st.error("لم يتم العثور على مفتاح الأمان السري في الإعدادات.")
+    st.stop()
 
-# تنظيف المفتاح من أي علامات تنصيص زائدة أثناء اللصق لضمان الاتصال السليم
+# تنظيف المفتاح لضمان سلامة الاتصال الفوري بخوادم غوغل لعام 2026
 api_key = api_key.replace('"', '').replace("'", "").strip()
 client = genai.Client(api_key=api_key)
 
-# قراءة قاعدة البيانات الأسلوبية من ملف الوورد المرفق في المستودع
+# 1. المدرسة اللغوية: قراءة المدونة أحادية اللغة لتعلم أسلوب الصرف والنحو والتركيب الصحفي
 @st.cache_data
-def load_tamazight_corpus():
+def load_monolingual_corpus():
     file_name = "database.docx"
     if not os.path.exists(file_name):
         return []
     try:
         doc = Document(file_name)
-        full_text = []
+        text_lines = []
         for para in doc.paragraphs:
             text = para.text.strip()
-            if text and len(text) > 5:
-                full_text.append(text)
-        return full_text
+            if text and len(text) > 10 and "@" not in text:
+                text_lines.append(text)
+        return text_lines
     except Exception:
         return []
 
-corpus_data = load_tamazight_corpus()
+# 2. المرجع المقدس: قراءة الذاكرة الترجمية الثنائية (المفصولة بـ @) لربط المصطلحات بدقة خارقة
+@st.cache_data
+def load_translation_memory():
+    file_name = "tm.docx"
+    if not os.path.exists(file_name):
+        return []
+    try:
+        doc = Document(file_name)
+        memory_pairs = []
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if "@" in text and len(text) > 10:
+                parts = text.split("@")
+                if len(parts) >= 2:
+                    memory_pairs.append({
+                        "tamazight": parts[0].strip(),
+                        "foreign": parts[1].strip()
+                    })
+        return memory_pairs
+    except Exception:
+        return []
+
+mono_corpus = load_monolingual_corpus()
+tm_data = load_translation_memory()
 
 mode = st.sidebar.radio(
-    "اختر وضع الترجمة:",
+    "اختر وضع الترجمة الصحفية المعتمد:",
     ["إخباري رسمي وصارم", "أدبي / ثقافي"]
 )
 
 if mode == "إخباري رسمي وصارم":
-    instruction = """أنت رئيس تحرير ومترجم رسمي متخصص في الأمازيغية المعيارية لصالح وكالة الأنباء.
-ترجم النص إلى الأمازيغية المعيارية بالحرف اللاتيني.
-التزم حرفياً بأسلوب وكالة الأنباء الرسمية (APS) والنحو المرفق في العينات أدناه، ولا تبتكر صياغات خارجة عنها.
-لا تضف أو تحذف أي معلومة، حافظ على الأسماء والأرقام والتواريخ، ولا تشرح الترجمة؛ أعطني النص الأمازيغي فقط."""
+    chosen_temp = 0.0
+    instruction = """أنت رئيس تحرير ومترجم رسمي صارم للغة الأمازيغية المعيارية لصالح وكالة الأنباء (APS).
+مهمتك: صياغة وترجمة البرقية المدخلة إلى الأمازيغية المعيارية الصارمة بالحرف اللاتيني.
+
+لقد تم تزويدك بمصدرين أساسيين مقدسين يجب أن تبني عليهما ترجمتك بالكامل:
+المصدر الأول والأهم (المرجع المقدس للترجمة): هو "نماذج الترجمة المقابلة المعتمدة" المرفقة في الأسفل، التزم بحقن الكلمات والمصطلحات المقابلة منها حرفياً.
+المصدر الثاني (المدرسة النحوية): هي "عينات الصياغة والصرف والتركيب النحوي"، وظيفتها أن تتعلم منها النحو، وصرف الأفعال، وطريقة صياغة العبارات لتبدو صحفية رسمية.
+
+التزم حرفياً بالمعلومات، لا تزد ولا تنقص، حافظ على الأرقام والتواريخ، وأعطني النص الأمازيغي اللاتيني فقط دون أي شرح أو تعليق."""
 else:
-    instruction = """أنت مترجم محترف متخصص في الأمازيغية المعيارية للنصوص الثقافية.
-ترجم النص إلى الأمازيغية المعيارية بالحرف اللاتيني بأسلوب طبيعي وسلس ومناسب للنص الأدبي بناءً على العينات المرفقة أدناه.
-حافظ على المعنى الكامل والأسماء والأرقام، ولا تشرح الترجمة؛ أعطني النص الأمازيغي فقط."""
+    chosen_temp = 0.7
+    instruction = """أنت مترجم محترف متخصص في الأمازيغية المعيارية للنصوص الثقافية والأدبية.
+ترجم النص إلى الأمازيغية بأسلوب طبيعي، سلس، وجذاب بناءً على العينات الترجمية والأسلوبية المرفقة أدناه.
+أعطني النص الأمازيغي فقط دون أي إضافات تفسيرية."""
 
 text_to_translate = st.text_area(
-    "أدخل النص بالعربية أو الفرنسية:",
-    height=220,
-    placeholder="اكتب النص هنا..."
+    "أدخل البرقية الصحفية المراد ترجمتها (بالفرنسية أو العربية):",
+    height=200,
+    placeholder="ضع النص هنا..."
 )
 
-if st.button("بدء الترجمة", type="primary"):
+if st.button("بدء الترجمة الاحترافية المدمجة", type="primary"):
     if not text_to_translate.strip():
-        st.warning("يرجى إدخال نص أولًا.")
+        st.warning("يرجى إدخال نص أولًا للبدء.")
         st.stop()
 
-    st.info("جاري فحص الذاكرة اللغوية والترجمة بواسطة Gemini 3.5 Flash-Lite...")
+    st.info("جاري استرجاع السياق من المرجع المقدس والمدرسة اللغوية...")
 
     try:
-        # الفلترة الذكية الموضعية لملف الوورد لاستخلاص المصطلحات المطابقة للبرقية فقط لضمان السرعة الفائقة
-        search_words = [w.strip().lower() for w in text_to_translate.split() if len(w.strip()) > 3]
-        matched_style = []
-        for paragraph in corpus_data:
-            if any(word in paragraph.lower() for word in search_words):
-                matched_style.append(paragraph)
-            if len(matched_style) >= 12: # استدعاء أفضل 12 عينة متطابقة لتقليص حجم البيانات
-                break
+        # استخلاص الكلمات المفتاحية للبحث الذكي السريع
+        search_words = [w.strip().lower() for w in text_to_translate.split() if len(w.strip()) > 4]
         
-        if not matched_style:
-            matched_style = corpus_data[:10]
-            
-        style_context = "\n".join(matched_style)
+        # أ) البحث الموضعي الفوري داخل "المرجع المقدس" (tm.docx) واستخراج المتطابقات
+        matched_pairs = []
+        if tm_data:
+            for pair in tm_data:
+                if any(word in pair["foreign"].lower() for word in search_words):
+                    matched_pairs.append(pair)
+                if len(matched_pairs) >= 5:  # استدعاء أفضل 5 أمثلة مترجمة للسرعة الفائقة
+                    break
+        if not matched_pairs:
+            matched_pairs = tm_data[:3] if tm_data else []
 
-        # دمج الـ Prompt مع سياق ملف الوورد المفلتر بدقة
+        # ب) البحث الموضعي الفوري داخل "المدرسة النحوية" (database.docx) لتعلم النحو والتركيب المتطابق
+        matched_mono = []
+        if mono_corpus:
+            sample_tamazight_words = []
+            for pair in matched_pairs:
+                sample_tamazight_words.extend([w.lower() for w in pair["tamazight"].split() if len(w) > 4])
+            
+            for line in mono_corpus:
+                if any(word in line.lower() for word in sample_tamazight_words) or any(word in line.lower() for word in search_words):
+                    matched_mono.append(line)
+                if len(matched_mono) >= 6:  # استدعاء أفضل 6 عينات صرف ونحو
+                    break
+        if not matched_mono:
+            matched_mono = mono_corpus[:4] if mono_corpus else []
+
+        # بناء السياق المشفر التوأم بدقة متناهية لـ Gemini
+        tm_context = ""
+        for i, pair in enumerate(matched_pairs, 1):
+            tm_context += f"نموذج ترجمة معتمد {i}:\nالنص الأصلي: {pair['foreign']}\nالترجمة الأمازيغية المقدسة: {pair['tamazight']}\n---\n"
+            
+        mono_context = "\n".join(matched_mono)
+
         prompt = f"""{instruction}
 
-        العينات الأسلوبية المعتمدة المسترجعة من ملفك المرجعي:
-        ---
-        {style_context}
-        ---
+        المصدر الأول (المرجع المقدس لنماذج الترجمة المقابلة المعتمدة):
+        {tm_context}
 
-        النص الأصلي المراد ترجمته الآن:
+        المصدر الثاني (عينات الصياغة والصرف والتركيب النحوي الأحادية):
+        {mono_context}
+
+        النص الجديد المراد صياغته وترجمته الآن بدقة بالغة:
         {text_to_translate}
 
-        الترجمة الأمازيغية المعتمدة:"""
+        الترجمة الأمازيغية الرسمية الصارمة والنهائية (حرف لاتيني):"""
 
+        # استدعاء المحرك الخفيف الفوري والمستقر للأحجام الضخمة
         response = client.models.generate_content(
             model="gemini-3.5-flash-lite",
+            generation_config={"temperature": chosen_temp},
             contents=prompt
         )
 
         result = response.text
 
         if result and result.strip():
-            st.success("تمت الترجمة بنجاح.")
-            st.text_area(
-                "الترجمة الأمازيغية:",
-                value=result.strip(),
-                height=280
-            )
+            st.success("تمت الترجمة بنجاح واكتملت صياغة الخبر بناءً على المرجعية المزدوجة.")
+            st.text_area("الترجمة الأمازيغية المعيارية المعتمدة (حرف لاتيني):", value=result.strip(), height=250)
         else:
-            st.error("لم يُرجع Gemini نصًا.")
+            st.error("لم ينجح النظام في معالجة النص، يرجى إعادة المحاولة.")
 
     except Exception as error:
-        st.error("حدث خطأ أثناء الاتصال بـ Gemini.")
+        st.error("حدث خطأ تقني أثناء الاتصال بالذاكرة المزدوجة المستقرة.")
         st.code(str(error))
