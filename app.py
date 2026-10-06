@@ -1,8 +1,8 @@
 import os
 import streamlit as st
-import pandas as pd
 import requests
 import re
+from docx import Document
 
 st.set_page_config(
     page_title="Tasuqilt Enterprise",
@@ -18,25 +18,28 @@ if "lexicon_data" not in st.session_state:
     st.session_state["lexicon_data"] = {}
 
 st.title("Tasuqilt 🇩🇿")
-st.subheader("منصة إدارة الترجمة الإعلامية والأمازيغية المعيارية الصارمة (المحرك المفتوح)")
+st.subheader("منصة الترجمة الإعلامية الصارمة (بمحرك الوورد والمستودع المفتوح)")
 
-# قراءة قاعدة البيانات من ملف إكسيل الفائق الدقة
-@st.cache_data
+# قراءة المرجع المقدس للفقرات المترجمة من ملف الوورد tm.docx المخفف والموفر للطاقة
+@st.cache_data(max_entries=1)
 def load_translation_memory():
-    file_name = "tm.xlsx"
+    file_name = "tm.docx"
     if not os.path.exists(file_name):
         return []
     try:
-        df = pd.read_excel(file_name)
+        doc = Document(file_name)
         memory_pairs = []
-        for index, row in df.iterrows():
-            french_text = str(row.iloc[0]).strip()
-            tamazight_text = str(row.iloc[1]).strip()
-            if french_text and tamazight_text and french_text != "nan" and tamazight_text != "nan":
-                memory_pairs.append({
-                    "tamazight": tamazight_text,
-                    "foreign": french_text
-                })
+        for para in doc.paragraphs:
+            text = para.text.strip()
+            if "@" in text and len(text) > 10:
+                parts = text.split("@")
+                if len(parts) >= 2:
+                    memory_pairs.append({
+                        "tamazight": parts[0].strip(),
+                        "foreign": parts[1].strip()
+                    })
+            if len(memory_pairs) >= 3000: # حد أمان لضمان سرعة السيرفر الخارقة
+                break
         return memory_pairs
     except Exception:
         return []
@@ -85,15 +88,17 @@ if st.button("بدء الترجمة الاحترافية الموحدة", type="
         st.warning("يرجى إدخال نص أولًا للبدء.")
         st.stop()
 
-    st.info("جاري فحص الذاكرة الجدولية وتفعيل المحرك الحر المستقر...")
+    st.info("جاري فحص مستند الوورد وتفعيل المحرك المستقر فوراً...")
 
     try:
         search_words = [w.strip().lower() for w in text_to_translate.split() if len(w.strip()) > 4]
         
-        # حقن جدار الحماية الصارم لمنع الهلوسة والمصطلحات القديمة
+        # قفل المصطلحات الحيوية بقوانين برمجية صارمة في الكود لمنع أي هلوسة
         active_dict_context = "\n⚠️ RÈGLES DE TRADUCTION ABSOLUES ET OBLIGATOIRES :\n"
         active_dict_context += "- رئيس الجمهورية = Aselway n Tegduda\n"
+        active_dict_context += "- Le président = Aselway\n"
         active_dict_context += "- ALGER = DZAYER TAMANEƔT\n"
+        active_dict_context += "- Alger = DZAYER TAMANEƔT\n"
         active_dict_context += "- Conseil des ministres = Aseqqamu n Yineɣlaf\n"
         active_dict_context += "- réunion = Timlilt\n"
         active_dict_context += "- gouvernement = Anabaḍ\n"
@@ -103,28 +108,28 @@ if st.button("بدء الترجمة الاحترافية الموحدة", type="
                 if k in text_to_translate.lower():
                     active_dict_context += f"- {k} = {v}\n"
 
-        matched_pairs = []
+        tm_context = ""
         if tm_data:
+            matched_pairs = []
             for pair in tm_data:
                 if any(word in pair["foreign"].lower() for word in search_words):
                     matched_pairs.append(pair)
                 if len(matched_pairs) >= 10:
                     break
-        if not matched_pairs:
-            matched_pairs = tm_data[:5] if tm_data else []
-
-        tm_context = ""
-        for i, pair in enumerate(matched_pairs, 1):
-            tm_context += f"نموذج مرجعي رسمي {i}:\nالنص الفرنسي الأصلي: {pair['foreign']}\nالترجمة الأمازيغية المعتمدة: {pair['tamazight']}\n---\n"
+            if not matched_pairs:
+                matched_pairs = tm_data[:5]
+                
+            for i, pair in enumerate(matched_pairs, 1):
+                tm_context += f"نموذج مرجعي رسمي {i}:\nالنص الفرنسي الأصلي: {pair['foreign']}\nالترجمة الأمازيغية المعتمدة: {pair['tamazight']}\n---\n"
 
         instruction = """أنت رئيس تحرير ومترجم رسمي صارم للغة الأمازيغية المعيارية لصالح وكالة الأنباء (APS).
         مهمتك الحتمية والمقدسة: صياغة وترجمة البرقية المدخلة إلى الأمازيغية المعيارية الصارمة بالحرف اللاتيني.
-        التزم التزاماً عسكرياً صارماً بالمعجم والنماذج المرفقة المستخرجة من الإكسيل. يُحظر تماماً التخمين أو الابتكار.
+        التزم التزاماً عسكرياً صارماً بالمعجم والنماذج المرفقة المستخرجة من الوورد. يُحظر تماماً التخمين أو الابتكار.
         يُمنع منعاً باتاً استخدام أي حروف عربية في النص الأمازيغي النهائي. استخدم دائماً DZAYER TAMANEƔT لـ ALGER و Aselway n Tegduda لـ رئيس الجمهورية."""
 
-        system_prompt = f"{instruction}\n\nالقواعد المورفولوجية المعتمدة للوكالة:\n{active_dict_context}\n\nالذاكرة المرجعية الجدولية المعتمدة:\n{tm_context}\n{st.session_state['live_corrections']}"
+        system_prompt = f"{instruction}\n\nالقواعد المورفولوجية المعتمدة للوكالة:\n{active_dict_context}\n\nالذاكرة المرجعية المعتمدة:\n{tm_context}\n{st.session_state['live_corrections']}"
 
-        # الاتصال بالمحرك المفتوح المستقر واللامحدود لتخطي قفل غوغل نهائياً
+        # الاتصال الفوري والمستقر بالمحرك المفتوح اللامحدود لتفادي حصار غوغل
         url = "https://pollinations.ai"
         payload = {
             "messages": [
@@ -139,16 +144,16 @@ if st.button("بدء الترجمة الاحترافية الموحدة", type="
 
         if response.status_code == 200 and response.text.strip():
             output = response.text.strip()
-            # استبدال آلي لأي خطأ متكرر لضمان النقاء الكامل
+            # المصفي الآلي لطرد أي كلمات مشوهة قديمة من الشاشة نهائياً
             output = re.sub(r'\banmazul\b', 'Aselway', output, flags=re.IGNORECASE)
             output = re.sub(r'\banemhal\b', 'Aselway', output, flags=re.IGNORECASE)
             output = re.sub(r'yettu[εe]zlen', 'i yettwaheggan', output)
             output = re.sub(r'[\u0600-\u06FF]+', '', output).replace("  ", " ").strip()
 
-            st.success("تمت الترجمة بنجاح واكتملت صياغة الخبر بناءً على الذاكرة الجدولية والمحرك الحر.")
+            st.success("تمت الترجمة بنجاح واكتملت صياغة الخبر بناءً على قواعد الوورد والمحرك الحر الجديد.")
             st.text_area("الترجمة الأمازيغية المعيارية النهائية (أسلوب APS رسمي ونظيف 100%):", value=output, height=280)
         else:
-            st.error("الخادم مشغول حالياً، يرجى إعادة المحاولة.")
+            st.error("الخادم مستغرق في معالجة المستند، يرجى تكرار المحاولة الآن سريعا.")
 
     except Exception as error:
         st.error(f"حدث خطأ تقني أثناء الاتصال بالمحرك الحر: {error}")
