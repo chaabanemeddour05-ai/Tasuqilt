@@ -1,6 +1,7 @@
 import os
 import streamlit as st
 from google import genai
+from google.genai import types
 from docx import Document
 
 st.set_page_config(
@@ -21,7 +22,7 @@ if not api_key:
     st.error("لم يتم العثور على مفتاح الأمان السري في الإعدادات.")
     st.stop()
 
-# تنظيف المفتاح لضمان سلامة الاتصال الفوري بخوادم غوغل لعام 2026
+# تنظيف المفتاح لضمان سلامة الاتصال الفوري بخوادم غوغل
 api_key = api_key.replace('"', '').replace("'", "").strip()
 client = genai.Client(api_key=api_key)
 
@@ -138,9 +139,13 @@ if st.button("بدء الترجمة الاحترافية المدمجة", type="
             
         mono_context = "\n".join(matched_mono)
 
-        prompt = f"""{instruction}
+        # صياغة الـ Prompt والـ System Instruction بشكل متوافق تماماً مع مكتبة غوغل الحديثة لعام 2026
+        config = types.GenerateContentConfig(
+            temperature=chosen_temp,
+            system_instruction=instruction
+        )
 
-        المصدر الأول (المرجع المقدس لنماذج الترجمة المقابلة المعتمدة):
+        prompt = f"""المصدر الأول (المرجع المقدس لنماذج الترجمة المقابلة المعتمدة):
         {tm_context}
 
         المصدر الثاني (عينات الصياغة والصرف والتركيب النحوي الأحادية):
@@ -151,21 +156,21 @@ if st.button("بدء الترجمة الاحترافية المدمجة", type="
 
         الترجمة الأمازيغية الرسمية الصارمة والنهائية (حرف لاتيني):"""
 
-        # استدعاء المحرك الخفيف الفوري والمستقر للأحجام الضخمة
+        # استدعاء المحرك الخفيف الفوري والمستقر
         response = client.models.generate_content(
             model="gemini-3.5-flash-lite",
-            generation_config={"temperature": chosen_temp},
-            contents=prompt
+            contents=prompt,
+            config=config
         )
 
         result = response.text
 
         if result and result.strip():
             st.success("تمت الترجمة بنجاح واكتملت صياغة الخبر بناءً على المرجعية المزدوجة.")
-            st.text_area("الترجمة الأمازيغية المعيارية المعتمدة (حرف لاتيني):", value=result.strip(), height=250)
+            st.text_area("الترجمة الأمازيغية المعيارية النهائية:", value=result.strip(), height=250)
         else:
             st.error("لم ينجح النظام في معالجة النص، يرجى إعادة المحاولة.")
 
     except Exception as error:
-        st.error("حدث خطأ تقني أثناء الاتصال بالذاكرة المزدوجة المستقرة.")
+        st.error("حدث خطأ تقني أثناء الاتصال بالذكاء الاصطناعي.")
         st.code(str(error))
