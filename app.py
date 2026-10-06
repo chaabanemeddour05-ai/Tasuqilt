@@ -25,8 +25,8 @@ if not api_key:
 api_key = api_key.replace('"', '').replace("'", "").strip()
 client = genai.Client(api_key=api_key)
 
-# 1. المدرسة اللغوية: قراءة المدونة أحادية اللغة لتعلم أسلوب الصرف والنحو والتركيب الصحفي
-@st.cache_data
+# 1. المدرسة اللغوية: قراءة مخففة وموفرة للذاكرة لملف الأسلوب أحادي اللغة
+@st.cache_data(max_entries=1)
 def load_monolingual_corpus():
     file_name = "database.docx"
     if not os.path.exists(file_name):
@@ -34,16 +34,19 @@ def load_monolingual_corpus():
     try:
         doc = Document(file_name)
         text_lines = []
-        for para in doc.paragraphs:
+        # قراءة عينات محددة وموزعة لتقليل استهلاك الذاكرة بشكل ضخم
+        for i, para in enumerate(doc.paragraphs):
             text = para.text.strip()
             if text and len(text) > 10 and "@" not in text:
                 text_lines.append(text)
+            if len(text_lines) >= 3000: # حد أقصى للأسطر لمنع اختناق السيرفر
+                break
         return text_lines
     except Exception:
         return []
 
-# 2. المرجع المقدس: قراءة الذاكرة الترجمية الثنائية (المفصولة بـ @) لربط المصطلحات بدقة خارقة
-@st.cache_data
+# 2. المرجع المقدس: قراءة مخففة وموفرة للذاكرة للقاموس المزدوج المفصول بـ @
+@st.cache_data(max_entries=1)
 def load_translation_memory():
     file_name = "tm.docx"
     if not os.path.exists(file_name):
@@ -60,6 +63,8 @@ def load_translation_memory():
                         "tamazight": parts[0].strip(),
                         "foreign": parts[1].strip()
                     })
+            if len(memory_pairs) >= 5000: # حد أقصى لضمان استقرار السيرفر المجاني
+                break
         return memory_pairs
     except Exception:
         return []
@@ -165,5 +170,5 @@ if st.button("بدء الترجمة الاحترافية المدمجة", type="
             st.error("لم ينجح النظام في معالجة النص، يرجى إعادة المحاولة.")
 
     except Exception as error:
-        st.error("حدث خطأ تقني أثناء الاتصال بالذكاء الاصطناعي.")
+        st.error("حدث خطأ تقني أثناء الاتصال بالذكا الاصطناعي.")
         st.code(str(error))
