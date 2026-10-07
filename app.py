@@ -132,9 +132,9 @@ with col1:
         height=250,
         placeholder="Saisissez ou collez votre paragraphe ici..."
     )
-    submit_button = st.button(f"Traduire avec {engine_choice} 🚀", type="primary")
+    submit_button = st.button(f"Traduire s'il vous plaît 🚀", type="primary")
 
-# تهيئة حقل الاستقبال الخارجي لمنع تعارض الأسطر
+# تهيئة المتغيرات حرة خارج الكتل البرمجية
 output_text = ""
 server_error = False
 
@@ -211,5 +211,5 @@ if submit_button:
             except Exception as error:
                 st.error(f"Technical Error: {error}")
 
-# عرض النتائج مستقل حراً ومطابق لهيكل عمود غوغل تراديكسيون
+# عرض عمود التصدير والمخرجات حر وبدون تداخل مسافات البادئة نهائياً
 with col2:
