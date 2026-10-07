@@ -134,10 +134,9 @@ with col1:
     )
     submit_button = st.button(f"Traduire avec {engine_choice} 🚀", type="primary")
 
-with col2:
-    dst_label = "Texte Traduit (Tamazight)" if "Auto-Detect" in direction else "Texte Traduit (Français / Arabe)"
-    st.markdown(f"**{dst_label} :**")
-    output_placeholder = st.empty()
+# تهيئة حقل الاستقبال الخارجي لمنع تعارض الأسطر
+output_text = ""
+server_error = False
 
 if submit_button:
     if not text_to_translate.strip():
@@ -198,15 +197,19 @@ if submit_button:
                 response = requests.post(url, json=payload, timeout=25)
 
                 if response.status_code == 200 and response.text.strip():
-                    output = response.text.strip()
+                    raw_output = response.text.strip()
                     
                     if "Auto-Detect" in direction:
-                        output = re.sub(r'\banmazul\b', 'Aselway', output, flags=re.IGNORECASE)
-                        output = re.sub(r'\banemhal\b', 'Aselway', output, flags=re.IGNORECASE)
-                        output = re.sub(r'yettu[eε]zlen', 'i yettwaheggan', output)
-                        output = re.sub(r'[\u0600-\u06FF]+', '', output)
+                        raw_output = re.sub(r'\banmazul\b', 'Aselway', raw_output, flags=re.IGNORECASE)
+                        raw_output = re.sub(r'\banemhal\b', 'Aselway', raw_output, flags=re.IGNORECASE)
+                        raw_output = re.sub(r'yettu[eε]zlen', 'i yettwaheggan', raw_output)
+                        raw_output = re.sub(r'[\u0600-\u06FF]+', '', raw_output)
                         
-                    output = output.replace("  ", " ").strip()
-                    
-                    with col2:
-                        st.text_area("Résultat :", value=output, height=250, key="result_box")
+                    output_text = raw_output.replace("  ", " ").strip()
+                else:
+                    server_error = True
+            except Exception as error:
+                st.error(f"Technical Error: {error}")
+
+# عرض النتائج مستقل حراً ومطابق لهيكل عمود غوغل تراديكسيون
+with col2:
