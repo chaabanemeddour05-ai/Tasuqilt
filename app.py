@@ -28,7 +28,7 @@ if "lexicon_data" not in st.session_state:
     st.session_state["lexicon_data"] = {}
 
 st.title("Tasuqilt DZ 🇩🇿")
-st.markdown("<p style='font-size:1.1rem; color:gray;'>Système de traduction intelligent et gestion lexicale (APS)</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size:1.1rem; color:gray;'>Système de traduction intelligent et gestion lexical (APS)</p>", unsafe_allow_html=True)
 
 # Secure API Configuration
 api_key = os.environ.get("GEMINI_API_KEY")
@@ -57,8 +57,8 @@ def load_translation_memory():
                 parts = text.split("@")
                 if len(parts) >= 2:
                     memory_pairs.append({
-                        "tamazight": parts.strip(),
-                        "foreign": parts.strip()
+                        "tamazight": parts[0].strip(),
+                        "foreign": parts[1].strip()
                     })
         return memory_pairs
     except Exception:
@@ -108,9 +108,9 @@ if is_admin:
                     count += 1
             st.sidebar.success(f"✅ {count} termes intégrés !")
 
-# 📖 SECTION 1: INSTANT DICTIONARY (صندوق القاموس المصغر للمصطلحات والكلمات المفردة)
+# SECTION 1: INSTANT DICTIONARY
 st.markdown("### 📖 Dictionnaire Express / القاموس الفوري السريع")
-dict_col1, dict_col2 = st.columns([2, 2])
+dict_col1, dict_col2 = st.columns(2)
 
 with dict_col1:
     word_to_find = st.text_input("Entrez un mot ou terme à chercher / أدخل كلمة أو مصطلح مفرد :", placeholder="Ex: réunion , président, تلميذ...")
@@ -118,7 +118,6 @@ with dict_col2:
     st.markdown("**Résultat du dictionnaire :**")
     if word_to_find.strip():
         clean_query = word_to_find.strip().lower()
-        # Check in active dynamic lexicon data first
         if clean_query in st.session_state["lexicon_data"]:
             st.code(st.session_state["lexicon_data"][clean_query], language="text")
         elif "réunion" in clean_query or "اجتماع" in clean_query:
@@ -130,7 +129,7 @@ with dict_col2:
 
 st.markdown("---")
 
-# 📝 SECTION 2: GLOBAL TRANSLATOR (نظام ترجمة البرقيات الطويلة التبادلي المتقابل)
+# SECTION 2: GLOBAL TRANSLATOR
 st.markdown("### 📰 Traducteur de Dépêches / مترجم البرقيات الإعلامية")
 col1, col2 = st.columns(2)
 
@@ -156,7 +155,6 @@ if submit_button:
             try:
                 search_words = [w.strip().lower() for w in text_to_translate.split() if len(w.strip()) > 4]
                 
-                # Active morphological injection block
                 active_dict_context = "\n⚠️ APS CRITICAL LEXICON RULES :\n"
                 if "Auto-Detect" in direction:
                     active_dict_context += "- président de la république = Aselway n Tegduda\n- رئيس الجمهورية = Aselway n Tegduda\n- le président = Aselway\n- alger = DZAYER TAMANEƔT\n- Conseil des ministres = Aseqqamu n Yineɣlaf\n- réunion = Timlilt\n- gouvernement = Anabaḍ\n"
@@ -167,7 +165,6 @@ if submit_button:
                 else:
                     active_dict_context += "- Aselway n Tegduda = Président de la République\n- Aselway = Président\n- DZAYER TAMANEƔT = ALGER\n- Aseqqamu n Yineɣlaf = Conseil des ministres\n- Timlilt = Réunion\n- Anabaḍ = Gouvernement\n"
 
-                # Extract relevant pairs from tm.docx based on vocabulary
                 matched_pairs = []
                 if tm_data:
                     for pair in tm_data:
@@ -181,9 +178,8 @@ if submit_button:
 
                 tm_context = ""
                 for i, pair in enumerate(matched_pairs, 1):
-                    tm_context += f"Reference Ejemplo {i}:\nOriginal: {pair['foreign']}\nTamazight (APS): {pair['tamazight']}\n---\n"
+                    tm_context += f"Reference Framework {i}:\nOriginal: {pair['foreign']}\nTamazight (APS): {pair['tamazight']}\n---\n"
 
-                # Define final dynamic configuration instructions
                 direction_note = "Task: Automatically detect the source language and translate it into clear Latin Tamazight." if "Auto-Detect" in direction else "Task: Translate the Latin Tamazight text into professional French or Arabe based on structure."
                 full_instruction = f"{st.session_state['custom_system_instruction']}\n\n{direction_note}"
 
@@ -192,28 +188,27 @@ if submit_button:
                     system_instruction=full_instruction
                 )
 
-                prompt = f"""{active_dict_context}
-                
-                APS Translation Reference Framework:
-                {tm_context}
-
-                Text to translate now according to the selected direction:
-                {text_to_translate}
-
-                Output Translation:"""
-
-                # Core Request to Gemini 2.5 Flash Free Tier
                 response = client.models.generate_content(
                     model="gemini-2.5-flash",
-                    contents=prompt,
+                    contents=f"{active_dict_context}\n\nAPS Translation Reference Framework:\n{tm_context}\n\nText to translate now:\n{text_to_translate}\n\nOutput Translation:",
                     config=config
                 )
 
                 if response.text:
                     output = response.text.strip()
                     
-                    # Post-processing clean filter
                     if "Auto-Detect" in direction:
                         output = re.sub(r'\banmazul\b', 'Aselway', output, flags=re.IGNORECASE)
                         output = re.sub(r'\banemhal\b', 'Aselway', output, flags=re.IGNORECASE)
-                        output = re.sub(r'yettu[εe]zlen', 'i yettwaheggan', output)
+                        output = re.sub(r'yettu[eε]zlen', 'i yettwaheggan', output)
+                        output = re.sub(r'[\u0600-\u06FF]+', '', output)
+                        
+                    output = output.replace("  ", " ").strip()
+                    
+                    with col2:
+                        st.text_area("Résultat :", value=output, height=250, key="result_box")
+                        st.info("💡 Vous pouvez copier le texte du résultat ci-dessus directement.")
+                else:
+                    st.error("Le serveur n'a renvoyé aucun texte.")
+            except Exception as error:
+                st.error(f"Technical Error: {error}")
