@@ -12,7 +12,7 @@ st.set_page_config(
 
 ADMIN_PASSWORD = "APS_Tasuqilt_2026"
 
-# الأوامر والتوجيهات الإنجليزية العسكرية الصارمة الموحدة لجميع المحركات لمنع الهلوسة
+# Configuration des instructions strictes unifiées en anglais pour bloquer les hallucinations
 if "custom_system_instruction" not in st.session_state:
     st.session_state["custom_system_instruction"] = """You are the official Chief Editor and Translator for the Algeria Press Service (APS). 
 Your absolute mission is to handle translations accurately between languages based on user request.
@@ -29,7 +29,7 @@ if "lexicon_data" not in st.session_state:
 st.title("Tasuqilt DZ 🇩🇿")
 st.markdown("<p style='font-size:1.1rem; color:gray;'>Système de traduction intelligent et multi-moteurs (ChatGPT / Claude / DeepSeek / Grok)</p>", unsafe_allow_html=True)
 
-# قراءة المرجع المقدس للفقرات المترجمة من ملف tm.docx
+# Lecture sécurisée du fichier mémoire de traduction tm.docx
 @st.cache_data(max_entries=1)
 def load_translation_memory():
     file_name = "tm.docx"
@@ -44,8 +44,8 @@ def load_translation_memory():
                 parts = text.split("@")
                 if len(parts) >= 2:
                     memory_pairs.append({
-                        "tamazight": parts[0].strip(),
-                        "foreign": parts[1].strip()
+                        "tamazight": parts.strip(),
+                        "foreign": parts.strip()
                     })
         return memory_pairs
     except Exception:
@@ -53,10 +53,10 @@ def load_translation_memory():
 
 tm_data = load_translation_memory()
 
-# Sidebar Setup & Controls
+# Configuration du menu latéral (Sidebar)
 st.sidebar.header("⚙️ Configuration")
 
-# 🧠 الزر السحري الجديد: اختيار عقل المترجم الفوري بحرية كاملة ومجاناً!
+# Sélection interactive du moteur d'intelligence artificielle gratuit
 engine_choice = st.sidebar.selectbox(
     "Moteur d'IA / عقل الذكاء الاصطناعي :",
     ["ChatGPT (GPT-4o)", "Claude 3.5 Sonnet", "DeepSeek V3", "Grok (X-AI)"]
@@ -100,12 +100,12 @@ if is_admin:
                     count += 1
             st.sidebar.success(f"✅ {count} termes intégrés !")
 
-# SECTION 1: INSTANT DICTIONARY
+# SECTION 1: DICTIONNAIRE EXPRESS
 st.markdown("### 📖 Dictionnaire Express / القاموس الفوري السريع")
 dict_col1, dict_col2 = st.columns(2)
 
 with dict_col1:
-    word_to_find = st.text_input("Entrez un mot أو مصطلح مفرد :", placeholder="Ex: réunion , président...")
+    word_to_find = st.text_input("Entrez un mot ou terme à chercher :", placeholder="Ex: réunion , président...")
 with dict_col2:
     st.markdown("**Résultat du dictionnaire :**")
     if word_to_find.strip():
@@ -121,7 +121,7 @@ with dict_col2:
 
 st.markdown("---")
 
-# SECTION 2: GLOBAL TRANSLATOR
+# SECTION 2: TRADUCTEUR GLOBAL (STYLE GOOGLE TRANSLATE)
 st.markdown("### 📰 Traducteur de Dépêches / مترجم البرقيات الإعلامية")
 col1, col2 = st.columns(2)
 
@@ -137,6 +137,7 @@ with col1:
 with col2:
     dst_label = "Texte Traduit (Tamazight)" if "Auto-Detect" in direction else "Texte Traduit (Français / Arabe)"
     st.markdown(f"**{dst_label} :**")
+    output_placeholder = st.empty()
 
 if submit_button:
     if not text_to_translate.strip():
@@ -174,7 +175,7 @@ if submit_button:
                 direction_note = "Task: Automatically detect the source language and translate it into clear Latin Tamazight." if "Auto-Detect" in direction else "Task: Translate the Latin Tamazight text into professional French or Arabe."
                 full_instruction = f"{st.session_state['custom_system_instruction']}\n\n{direction_note}"
 
-                # خريطة الربط الذكية لتبديل موديل الذكاء الاصطناعي خلف الكواليس بناءً على اختيارك في الواجهة
+                # Correspondance des modèles réseau libre
                 model_map = {
                     "ChatGPT (GPT-4o)": "openai",
                     "Claude 3.5 Sonnet": "claude",
@@ -209,4 +210,3 @@ if submit_button:
                     
                     with col2:
                         st.text_area("Résultat :", value=output, height=250, key="result_box")
-                        st.info("💡 Vous pouvez copier le texte du résultat ci-dessus directement.")
