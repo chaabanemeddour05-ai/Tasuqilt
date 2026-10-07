@@ -1,19 +1,18 @@
 import os
 import streamlit as st
+import requests
 import re
-from google import genai
-from google.genai import types
 from docx import Document
 
 st.set_page_config(
-    page_title="Tasuqilt Enterprise",
+    page_title="Tasuqilt Hybrid Enterprise",
     page_icon="🇩🇿",
     layout="wide"
 )
 
 ADMIN_PASSWORD = "APS_Tasuqilt_2026"
 
-# Init default strict English instructions for Gemini
+# الأوامر والتوجيهات الإنجليزية العسكرية الصارمة الموحدة لجميع المحركات لمنع الهلوسة
 if "custom_system_instruction" not in st.session_state:
     st.session_state["custom_system_instruction"] = """You are the official Chief Editor and Translator for the Algeria Press Service (APS). 
 Your absolute mission is to handle translations accurately between languages based on user request.
@@ -28,21 +27,9 @@ if "lexicon_data" not in st.session_state:
     st.session_state["lexicon_data"] = {}
 
 st.title("Tasuqilt DZ 🇩🇿")
-st.markdown("<p style='font-size:1.1rem; color:gray;'>Système de traduction intelligent et gestion lexical (APS)</p>", unsafe_allow_html=True)
+st.markdown("<p style='font-size:1.1rem; color:gray;'>Système de traduction intelligent et multi-moteurs (ChatGPT / Claude / DeepSeek / Grok)</p>", unsafe_allow_html=True)
 
-# Secure API Configuration
-api_key = os.environ.get("GEMINI_API_KEY")
-if not api_key and "GEMINI_API_KEY" in st.secrets:
-    api_key = st.secrets["GEMINI_API_KEY"]
-
-if not api_key:
-    st.error("Error: GEMINI_API_KEY introuvable dans les paramètres secrets.")
-    st.stop()
-
-api_key = api_key.replace('"', '').replace("'", "").strip()
-client = genai.Client(api_key=api_key)
-
-# Load translation memory tm.docx safely
+# قراءة المرجع المقدس للفقرات المترجمة من ملف tm.docx
 @st.cache_data(max_entries=1)
 def load_translation_memory():
     file_name = "tm.docx"
@@ -68,6 +55,13 @@ tm_data = load_translation_memory()
 
 # Sidebar Setup & Controls
 st.sidebar.header("⚙️ Configuration")
+
+# 🧠 الزر السحري الجديد: اختيار عقل المترجم الفوري بحرية كاملة ومجاناً!
+engine_choice = st.sidebar.selectbox(
+    "Moteur d'IA / عقل الذكاء الاصطناعي :",
+    ["ChatGPT (GPT-4o)", "Claude 3.5 Sonnet", "DeepSeek V3", "Grok (X-AI)"]
+)
+
 direction = st.sidebar.selectbox(
     "Direction de traduction / اتجاه الترجمة :",
     ["Auto-Detect [Français/Arabe] ➔ Tamazight", "Tamazight ➔ Auto-Detect [Français/Arabe]"]
@@ -82,14 +76,12 @@ is_admin = (admin_input == ADMIN_PASSWORD)
 if is_admin:
     st.sidebar.success("🔓 Mode Éditeur activé !")
     
-    # Prompt Editor
     st.sidebar.subheader("📝 Modifier le Prompt (English)")
     updated_prompt = st.sidebar.text_area("System Instruction :", value=st.session_state["custom_system_instruction"], height=120)
     if st.sidebar.button("💾 Enregistrer le Prompt"):
         st.session_state["custom_system_instruction"] = updated_prompt
         st.sidebar.success("✅ Prompt mis à jour !")
         
-    # Bulk Lexicon Injector
     st.sidebar.markdown("---")
     st.sidebar.subheader("📚 Dictionnaire (Copier-Coller)")
     raw_lexicon_text = st.sidebar.text_area("Collez la liste des mots ici :", height=120)
@@ -113,7 +105,7 @@ st.markdown("### 📖 Dictionnaire Express / القاموس الفوري الس�
 dict_col1, dict_col2 = st.columns(2)
 
 with dict_col1:
-    word_to_find = st.text_input("Entrez un mot ou terme à chercher / أدخل كلمة أو مصطلح مفرد :", placeholder="Ex: réunion , président, تلميذ...")
+    word_to_find = st.text_input("Entrez un mot أو مصطلح مفرد :", placeholder="Ex: réunion , président...")
 with dict_col2:
     st.markdown("**Résultat du dictionnaire :**")
     if word_to_find.strip():
@@ -125,7 +117,7 @@ with dict_col2:
         elif "président" in clean_query or "رئيس" in clean_query:
             st.code("Aselway", language="text")
         else:
-            st.info("Terme non trouvé dans le dictionnaire local. Utilisez la zone de texte globale ci-dessous.")
+            st.info("Terme non trouvé dans le dictionnaire local.")
 
 st.markdown("---")
 
@@ -134,24 +126,23 @@ st.markdown("### 📰 Traducteur de Dépêches / مترجم البرقيات ا�
 col1, col2 = st.columns(2)
 
 with col1:
-    src_label = "Source Text (Auto-Detect Language)" if "Auto-Detect" in direction else "Texte Source (Tamazight - Lettres Latines)"
+    src_label = "Source Text" if "Auto-Detect" in direction else "Texte Source (Tamazight)"
     text_to_translate = st.text_area(
         f"{src_label} :",
         height=250,
         placeholder="Saisissez ou collez votre paragraphe ici..."
     )
-    submit_button = st.button("Traduire la dépêche 🚀", type="primary")
+    submit_button = st.button(f"Traduire avec {engine_choice} 🚀", type="primary")
 
 with col2:
-    dst_label = "Texte Traduit (Tamazight - Lettres Latines)" if "Auto-Detect" in direction else "Texte Traduit (Français / Arabe)"
+    dst_label = "Texte Traduit (Tamazight)" if "Auto-Detect" in direction else "Texte Traduit (Français / Arabe)"
     st.markdown(f"**{dst_label} :**")
-    output_placeholder = st.empty()
 
 if submit_button:
     if not text_to_translate.strip():
         st.warning("Veuillez entrer un paragraphe à traduire.")
     else:
-        with st.spinner("Analyse contextuelle et traduction en cours..."):
+        with st.spinner(f"Analyse contextuelle et traduction via {engine_choice} en cours..."):
             try:
                 search_words = [w.strip().lower() for w in text_to_translate.split() if len(w.strip()) > 4]
                 
@@ -171,30 +162,41 @@ if submit_button:
                         match_source = pair["foreign"] if "Auto-Detect" in direction else pair["tamazight"]
                         if any(word in match_source.lower() for word in search_words):
                             matched_pairs.append(pair)
-                        if len(matched_pairs) >= 10:
+                        if len(matched_pairs) >= 6:
                             break
                 if not matched_pairs:
-                    matched_pairs = tm_data[:5] if tm_data else []
+                    matched_pairs = tm_data[:3] if tm_data else []
 
                 tm_context = ""
                 for i, pair in enumerate(matched_pairs, 1):
                     tm_context += f"Reference Framework {i}:\nOriginal: {pair['foreign']}\nTamazight (APS): {pair['tamazight']}\n---\n"
 
-                direction_note = "Task: Automatically detect the source language and translate it into clear Latin Tamazight." if "Auto-Detect" in direction else "Task: Translate the Latin Tamazight text into professional French or Arabe based on structure."
+                direction_note = "Task: Automatically detect the source language and translate it into clear Latin Tamazight." if "Auto-Detect" in direction else "Task: Translate the Latin Tamazight text into professional French or Arabe."
                 full_instruction = f"{st.session_state['custom_system_instruction']}\n\n{direction_note}"
 
-                config = types.GenerateContentConfig(
-                    temperature=0.0,
-                    system_instruction=full_instruction
-                )
+                # خريطة الربط الذكية لتبديل موديل الذكاء الاصطناعي خلف الكواليس بناءً على اختيارك في الواجهة
+                model_map = {
+                    "ChatGPT (GPT-4o)": "openai",
+                    "Claude 3.5 Sonnet": "claude",
+                    "DeepSeek V3": "deepseek",
+                    "Grok (X-AI)": "p1"
+                }
+                
+                chosen_model = model_map.get(engine_choice, "openai")
 
-                response = client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=f"{active_dict_context}\n\nAPS Translation Reference Framework:\n{tm_context}\n\nText to translate now:\n{text_to_translate}\n\nOutput Translation:",
-                    config=config
-                )
+                url = "https://pollinations.ai"
+                payload = {
+                    "messages": [
+                        {"role": "system", "content": f"{full_instruction}\n\nRules:\n{active_dict_context}\n\nReference data:\n{tm_context}"},
+                        {"role": "user", "content": f"Translate perfectly: {text_to_translate}"}
+                    ],
+                    "model": chosen_model,
+                    "temperature": 0.0
+                }
+                
+                response = requests.post(url, json=payload, timeout=25)
 
-                if response.text:
+                if response.status_code == 200 and response.text.strip():
                     output = response.text.strip()
                     
                     if "Auto-Detect" in direction:
@@ -208,7 +210,3 @@ if submit_button:
                     with col2:
                         st.text_area("Résultat :", value=output, height=250, key="result_box")
                         st.info("💡 Vous pouvez copier le texte du résultat ci-dessus directement.")
-                else:
-                    st.error("Le serveur n'a renvoyé aucun texte.")
-            except Exception as error:
-                st.error(f"Technical Error: {error}")
