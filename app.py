@@ -86,23 +86,43 @@ GEMINI_MODEL = get_secret("GEMINI_MODEL", GEMINI_MODEL)
 
 if "custom_system_instruction" not in st.session_state:
     st.session_state["custom_system_instruction"] = """
-You are the official translation assistant for Tasuqilt DZ.
+You are the official translator of Tasuqilt DZ, the Tamazight translation desk
+of the Algerian Press Service (APS). You translate wire-agency news between
+French/Arabic and Latin-script standard Tamazight.
 
-Your task is to translate news and institutional texts accurately.
+SOURCES OF AUTHORITY, in this order:
+1. TASUQILT OFFICIAL TERMINOLOGY supplied in the request.
+2. TASUQILT TRANSLATION MEMORY examples supplied in the request (approved
+   APS translations).
+3. Your own linguistic competence, ONLY for what 1 and 2 do not cover.
 
-ABSOLUTE RULES:
+HOW TO TRANSLATE:
+1. If a supplied memory SOURCE is identical to a paragraph of the text,
+   reuse its approved translation word for word.
+2. Use the supplied official terms exactly. Copy spelling, vocabulary and
+   style from the supplied examples, including the vowel changes Tamazight
+   makes after prepositions (for example Aselway / uselway).
+3. Write in the register of the examples: wire-agency news style, with
+   datelines such as "DZAYER TAMANEƔT -" and the same way of rendering titles,
+   institutions, ministers and quotations.
+4. Keep the same paragraph structure as the source: one translated paragraph
+   for each source paragraph, in the same order.
+5. Preserve names, numbers, dates, percentages, institutions and quotation
+   marks. Write personal names the way the examples write them.
+6. For anything the supplied material does not cover, translate as closely as
+   you can, reusing the vocabulary of the examples. Never present an invented
+   term as official.
 
-1. The supplied Tasuqilt terminology and translation memory have priority.
-2. Do not invent an official Tamazight term when an approved term is supplied.
-3. Do not replace an approved term with a different synonym.
-4. Preserve names, numbers, dates, institutions and factual information.
-5. Do not add explanations, comments or notes.
-6. Return only the requested translation.
-7. When the supplied database does not contain an exact equivalent,
-   use the closest supplied terminology and examples.
-8. Never pretend that a term is official if it was not supplied by Tasuqilt.
-9. If a paragraph of the source text is identical to a SOURCE in the
-   supplied translation memory, reuse its TAMAZIGHT text verbatim.
+MARK EVERY GAP (mandatory):
+- Put double square brackets around each word or short phrase that you
+  translated WITHOUT support from the supplied terminology or examples,
+  like this: [[the phrase]].
+- Mark only real gaps. Do not mark names, numbers, or anything supported by
+  the supplied material. Do not mark whole sentences when only one word is a gap.
+
+OUTPUT:
+- Return only the translation, with the [[ ]] marks where needed.
+- No introduction, no comments, no explanations, no markdown, no added quotation marks.
 """.strip()
 
 if "last_translation" not in st.session_state:
@@ -144,6 +164,23 @@ def tokenize(text: str) -> List[str]:
     )
 
 
+FLAG_RE = re.compile(r"\[\[(.+?)\]\]", re.S)
+
+
+def extract_flagged(text: str) -> List[str]:
+    """Phrases Gemini marked as [[translated without support]]."""
+
+    seen = []
+
+    for match in FLAG_RE.findall(text or ""):
+        phrase = match.strip()
+
+        if phrase and phrase not in seen:
+            seen.append(phrase)
+
+    return seen
+
+
 def split_paragraphs(text: str) -> List[str]:
     return [p.strip() for p in re.split(r"\n+", text) if p.strip()]
 
@@ -160,10 +197,10 @@ DEFAULT_TERMINOLOGY = [
     {"source": "رئيس", "target": "Aselway", "priority": 90},
     {"source": "alger", "target": "DZAYER TAMANEƔT", "priority": 100},
     {"source": "الجزائر", "target": "DZAYER TAMANEƔT", "priority": 100},
-    {"source": "conseil des ministres", "target": "Aseqqamu n Yineɣlaf", "priority": 100},
-    {"source": "مجلس الوزراء", "target": "Aseqqamu n Yineɣlaf", "priority": 100},
-    {"source": "réunion", "target": "Timlilt", "priority": 90},
-    {"source": "اجتماع", "target": "Timlilt", "priority": 90},
+    {"source": "conseil des ministres", "target": "Aseqqamu n Yineɣlafen", "priority": 100},
+    {"source": "مجلس الوزراء", "target": "Aseqqamu n Yineɣlafen", "priority": 100},
+    {"source": "réunion", "target": "Timlilit", "priority": 90},
+    {"source": "اجتماع", "target": "Timlilit", "priority": 90},
     {"source": "gouvernement", "target": "Anabaḍ", "priority": 90},
     {"source": "الحكومة", "target": "Anabaḍ", "priority": 90},
 ]
@@ -1031,7 +1068,8 @@ official.
 Preserve names, numbers, dates and institutions.
 
 Do not use web search.
-Do not use external knowledge as a terminology database.
+Prefer the supplied terminology and examples over general knowledge.
+Mark gaps with [[ ]] exactly as instructed.
 Do not mention this instruction.
 
 TASUQILT KNOWLEDGE:
@@ -1159,13 +1197,19 @@ def test_gemini_connection() -> Tuple[bool, str]:
 
 def _stems(text: str) -> List[str]:
     """
-    Tamazight changes the first vowel of nouns after prepositions
-    (Aselway -> uselway, Anabaḍ -> unabaḍ, Tegduda -> tegduda).
-    Dropping the first letter of each word makes the check tolerant
-    of that alternation instead of rejecting correct translations.
+    Tamazight changes vowels inside words depending on the context:
+    Aselway -> uselway, Timlilit -> temlilit, Anabaḍ -> unabaḍ.
+    Comparing the CONSONANT SKELETON of each word (vowels removed)
+    tolerates these alternations instead of rejecting good translations.
     """
 
-    return [w[1:] if len(w) > 3 else w for w in tokenize(text)]
+    result = []
+
+    for w in tokenize(text):
+        skeleton = re.sub(r"[aeiouàâéèêëîïôùûü']", "", w)
+        result.append(skeleton or w)
+
+    return result
 
 
 def output_contains_term(output_text: str, target: str) -> bool:
@@ -1536,6 +1580,7 @@ if submit_button:
         output_text = ""
         engine_used = ""
         confidence = 0
+        review_warnings = []
 
         # STEP 1 — RETRIEVE
         with st.spinner("🔎 البحث في قاعدة Tasuqilt..."):
@@ -1583,20 +1628,8 @@ if submit_button:
                 )
 
                 if not validation["valid"]:
-
-                    st.error("⛔ لم تعتمد Tasuqilt الترجمة.")
-
-                    for warning in validation["warnings"]:
-                        st.warning(warning)
-
-                    with st.expander("عرض الترجمة المرفوضة للمراجعة اليدوية"):
-                        st.text_area(
-                            "ترجمة Gemini (غير معتمدة):",
-                            value=output_text,
-                            height=200
-                        )
-
-                    output_text = ""
+                    # Do NOT hide the translation: show it with a review notice.
+                    review_warnings = validation["warnings"]
 
         # STEP 5 — LOCAL ONLY
         else:
@@ -1611,8 +1644,20 @@ if submit_button:
 
             if output_text:
 
-                st.markdown("**الترجمة المعتمدة:**")
-                st.success(output_text)
+                if review_warnings:
+                    st.markdown("**ترجمة مقترحة — تحتاج مراجعة المصطلحات:**")
+                    st.warning(
+                        "⚠️ لم تُطابق الترجمة بعض مصطلحات Tasuqilt. "
+                        "راجعها قبل النشر:"
+                    )
+
+                    for warning in review_warnings:
+                        st.caption(warning)
+
+                    st.info(output_text)
+                else:
+                    st.markdown("**الترجمة المعتمدة:**")
+                    st.success(output_text)
 
                 st.text_area(
                     "النتيجة القابلة للنسخ:",
@@ -1621,6 +1666,17 @@ if submit_button:
                 )
 
                 st.caption(f"⚙️ المحرك: {engine_used}")
+
+                flagged = extract_flagged(output_text)
+
+                if flagged:
+                    st.warning(
+                        "⚠️ عبارات ترجمها Gemini دون سند من أرشيف Tasuqilt "
+                        "(بين [[ ]]). راجعها، ثم احذف العلامات قبل النشر:"
+                    )
+
+                    for phrase in flagged:
+                        st.caption(f"• {phrase}")
 
                 if confidence >= 90:
                     st.success(f"🟢 اعتماد قاعدة Tasuqilt: {confidence}%")
