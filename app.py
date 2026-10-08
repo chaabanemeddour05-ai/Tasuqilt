@@ -48,7 +48,7 @@ GITHUB_OWNER = os.getenv("GITHUB_OWNER", DEFAULT_GITHUB_OWNER)
 GITHUB_REPO = os.getenv("GITHUB_REPO", DEFAULT_GITHUB_REPO)
 GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", DEFAULT_GITHUB_BRANCH)
 
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
 
 GITHUB_CACHE_TTL = 900
 
@@ -77,6 +77,7 @@ def get_secret(name: str, default: str = "") -> str:
 
 ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "")
 GEMINI_API_KEY = get_secret("GEMINI_API_KEY", "")
+GEMINI_MODEL = get_secret("GEMINI_MODEL", GEMINI_MODEL)
 
 
 # ============================================================
@@ -1099,6 +1100,59 @@ TASUQILT KNOWLEDGE:
         return "", f"خطأ في Gemini: {error}"
 
 
+def test_gemini_connection() -> Tuple[bool, str]:
+    """Sends one tiny request to prove the key + model really work."""
+
+    if not GEMINI_API_KEY:
+        return False, "GEMINI_API_KEY غير موجود في Secrets."
+
+    url = (
+        "https://generativelanguage.googleapis.com/"
+        f"v1beta/models/{GEMINI_MODEL}:generateContent"
+    )
+
+    payload = {
+        "contents": [
+            {"role": "user", "parts": [{"text": "Reply with the single word: OK"}]}
+        ],
+        "generationConfig": {"temperature": 0.0, "maxOutputTokens": 200}
+    }
+
+    try:
+        response = requests.post(
+            url,
+            headers={
+                "x-goog-api-key": GEMINI_API_KEY,
+                "Content-Type": "application/json"
+            },
+            json=payload,
+            timeout=30
+        )
+
+        if response.status_code == 200:
+            return True, f"الاتصال ناجح ✅ — النموذج: {GEMINI_MODEL}"
+
+        try:
+            message = response.json().get("error", {}).get("message", "")
+        except Exception:
+            message = response.text[:300]
+
+        hints = {
+            400: "مفتاح غير صالح أو طلب خاطئ.",
+            403: "المفتاح لا يملك صلاحية لهذا النموذج/المشروع.",
+            404: f"اسم النموذج غير موجود: {GEMINI_MODEL}. غيّر GEMINI_MODEL في Secrets.",
+            429: "تجاوزت الحد المجاني للطلبات. انتظر قليلاً.",
+        }
+
+        return False, (
+            f"فشل الاتصال ❌ HTTP {response.status_code}. "
+            f"{hints.get(response.status_code, '')} {message}"
+        )
+
+    except Exception as error:
+        return False, f"فشل الاتصال ❌ {error}"
+
+
 # ============================================================
 # 16. TERMINOLOGY VALIDATOR
 # ============================================================
@@ -1336,7 +1390,8 @@ else:
 
 
 if GEMINI_API_KEY:
-    st.sidebar.success("🟢 Gemini API مفعّل")
+    st.sidebar.success(f"🟢 مفتاح Gemini موجود — النموذج: {GEMINI_MODEL}")
+    st.sidebar.caption("وجود المفتاح لا يعني أنه يعمل. استخدم زر الاختبار في وضع الإدارة.")
 else:
     st.sidebar.warning(
         "🟡 Gemini غير مفعّل — المترجم المحلي فقط متاح."
@@ -1371,6 +1426,15 @@ if st.session_state["admin_mode"]:
     if st.sidebar.button("💾 حفظ التعليمات"):
         st.session_state["custom_system_instruction"] = updated_prompt
         st.sidebar.success("تم حفظ التعليمات لهذه الجلسة.")
+
+    if st.sidebar.button("🧪 اختبار اتصال Gemini"):
+        with st.spinner("اختبار الاتصال..."):
+            ok, message = test_gemini_connection()
+
+        if ok:
+            st.sidebar.success(message)
+        else:
+            st.sidebar.error(message)
 
     st.sidebar.markdown("---")
     st.sidebar.write("ملفات البيانات المقروءة:")
