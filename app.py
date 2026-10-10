@@ -79,10 +79,6 @@ def db_headers(prefer=None):
 
 
 ```python
-def db_select(table, params=None, limit=3000):
-    if not db_ready():
-        return []
-
     q = dict(params or {})
     q.setdefault("select", "*")
 
@@ -114,7 +110,6 @@ def db_select(table, params=None, limit=3000):
             timeout=TIMEOUT,
         )
         response.raise_for_status()
-
         data = response.json()
 
         if not isinstance(data, list) or not data:
