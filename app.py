@@ -26,8 +26,8 @@ GITHUB_API = (
     f"{GITHUB_OWNER}/{GITHUB_REPO}"
 )
 
-DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 
+DEFAULT_GEMINI_MODEL = "gemini-3.1-flash-lite"
 ALLOWED_EXTENSIONS = {
     ".xlsx", ".csv", ".json", ".txt", ".md", ".docx"
 }
