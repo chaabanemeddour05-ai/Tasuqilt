@@ -122,7 +122,6 @@ def db_headers(prefer=None):
             break
 
     return results
-```
 
 
 def db_insert(table, record):
