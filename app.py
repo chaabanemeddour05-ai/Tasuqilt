@@ -78,12 +78,56 @@ def db_headers(prefer=None):
     return h
 
 
+```python
 def db_select(table, params=None, limit=3000):
-    if not db_ready(): return []
-    q = dict(params or {}); q.setdefault("select", "*"); q.setdefault("limit", str(limit))
-    r = requests.get(f"{SUPABASE_URL}/rest/v1/{table}", headers=db_headers(), params=q, timeout=TIMEOUT)
-    r.raise_for_status(); data = r.json()
-    return data if isinstance(data, list) else []
+    if not db_ready():
+        return []
+
+    q = dict(params or {})
+    q.setdefault("select", "*")
+
+    try:
+        total_limit = int(limit)
+    except (TypeError, ValueError):
+        total_limit = 3000
+
+    if total_limit <= 0:
+        return []
+
+    page_size = 1000
+    results = []
+    offset = 0
+
+    while len(results) < total_limit:
+        current_limit = min(page_size, total_limit - len(results))
+        page_params = dict(q)
+        page_params["limit"] = str(current_limit)
+
+        headers = db_headers()
+        headers["Range-Unit"] = "items"
+        headers["Range"] = f"{offset}-{offset + current_limit - 1}"
+
+        response = requests.get(
+            f"{SUPABASE_URL}/rest/v1/{table}",
+            headers=headers,
+            params=page_params,
+            timeout=TIMEOUT,
+        )
+        response.raise_for_status()
+
+        data = response.json()
+
+        if not isinstance(data, list) or not data:
+            break
+
+        results.extend(data)
+        offset += len(data)
+
+        if len(data) < current_limit:
+            break
+
+    return results
+```
 
 
 def db_insert(table, record):
