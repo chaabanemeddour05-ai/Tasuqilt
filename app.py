@@ -78,7 +78,7 @@ def db_headers(prefer=None):
     return h
 
 
-```python
+
     q = dict(params or {})
     q.setdefault("select", "*")
 
