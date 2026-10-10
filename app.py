@@ -69,8 +69,12 @@ def db_ready():
 
 
 def db_headers(prefer=None):
-    h = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json"}
-    if prefer: h["Prefer"] = prefer
+    h = {
+        "apikey": SUPABASE_KEY,
+        "Content-Type": "application/json",
+    }
+    if prefer:
+        h["Prefer"] = prefer
     return h
 
 
