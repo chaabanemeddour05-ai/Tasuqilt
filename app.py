@@ -1265,3 +1265,70 @@ if translate_button:
         else:
             with st.spinner("جارٍ إعداد الترجمة..."):
                 try:
+                    
+                    translated, examples = call_gemini(
+                        source_text,
+                        direction,
+                        knowledge,
+                    )
+
+                    st.success("اكتملت الترجمة")
+
+                    st.text_area(
+                        "الترجمة",
+                        value=translated,
+                        height=260,
+                    )
+
+                    warnings = validate_translation(
+                        source_text,
+                        translated,
+                        knowledge["terminology"],
+                    )
+
+                    if warnings:
+                        with st.expander(
+                            "مراجعة المصطلحات المعيارية",
+                            expanded=True,
+                        ):
+                            for warning in warnings:
+                                st.warning(warning)
+
+                    st.caption(
+                        "هذه ترجمة مولّدة بالذكاء الاصطناعي؛ "
+                        "يجب مراجعتها قبل اعتمادها في النشر الصحفي."
+                    )
+
+                    if examples:
+                        with st.expander(
+                            "أمثلة ذاكرة الترجمة التي استُخدمت"
+                        ):
+                            for example in examples:
+                                st.write(
+                                    f"**{example['source']}**"
+                                )
+                                st.write(example["target"])
+
+                    st.download_button(
+                        "تنزيل الترجمة بصيغة TXT",
+                        data=translated.encode("utf-8"),
+                        file_name="tasuqilt_translation.txt",
+                        mime="text/plain",
+                    )
+
+                except Exception as exc:
+                    st.error("تعذّرت الترجمة عبر Gemini.")
+                    st.code(str(exc))
+
+
+# ============================================================
+# 15. FOOTER
+# ============================================================
+
+st.divider()
+
+st.caption(
+    "Tasuqilt DZ — مشروع للترجمة الأمازيغية المعيارية. "
+    "المطابقة في ذاكرة الترجمة لا تعادل التحقق اللغوي الكامل، "
+    "والترجمة المولّدة تحتاج إلى مراجعة تحريرية."
+)
