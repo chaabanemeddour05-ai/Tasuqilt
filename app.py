@@ -1,1081 +1,1016 @@
-import os
 import io
-import csv
-import json
+import os
 import re
-import difflib
-from typing import List, Dict, Tuple
+import json
+import time
+import unicodedata
+from difflib import SequenceMatcher
 
 import requests
+import pandas as pd
 import streamlit as st
 from docx import Document
+from openpyxl import load_workbook
 
 
 # ============================================================
-# TASUQILT DZ - FREE HYBRID TRANSLATION ENGINE
-# ============================================================
-#
-# ARCHITECTURE:
-#
-# GitHub public repository
-#        ↓
-# GitHub Reader
-#        ↓
-# Translation Memory + Lexicon + Corpus
-#        ↓
-# Intelligent Retrieval
-#        ↓
-# ┌────────────────────────────────────────────┐
-# │ Exact TM match?                            │
-# │       YES → use database result            │
-# │       NO  → Gemini Free with retrieved data│
-# └────────────────────────────────────────────┘
-#        ↓
-# Terminology Validator
-#        ↓
-# Final Translation
-#
-# IMPORTANT:
-# - No OpenAI paid API
-# - No Claude paid API
-# - No DeepSeek paid API
-# - No Grok paid API
-# - No Pollinations dependency
-# - Gemini is optional and only used if a free API key exists
-# - Without Gemini, the local dictionary/TM still works
+# 1. CONFIGURATION
 # ============================================================
 
+APP_TITLE = "Tasuqilt DZ"
+GITHUB_OWNER = "chaabanemeddour05-ai"
+GITHUB_REPO = "Tasuqilt"
 
-# ============================================================
-# 1. PAGE CONFIGURATION
-# ============================================================
-
-st.set_page_config(
-    page_title="Tasuqilt DZ 🇩🇿",
-    page_icon="🇩🇿",
-    layout="wide"
+GITHUB_API = (
+    f"https://api.github.com/repos/"
+    f"{GITHUB_OWNER}/{GITHUB_REPO}"
 )
 
+DEFAULT_GEMINI_MODEL = "gemini-3.8-flash"
 
-# ============================================================
-# 2. DEFAULT CONFIGURATION
-# ============================================================
+ALLOWED_EXTENSIONS = {
+    ".xlsx", ".csv", ".json", ".txt", ".md", ".docx"
+}
 
-# Public repository shown in your screenshot.
-# You can change these values later through Streamlit Secrets.
-DEFAULT_GITHUB_OWNER = "chaabanemeddour05-ai"
-DEFAULT_GITHUB_REPO = "Tasuqilt"
-DEFAULT_GITHUB_BRANCH = "main"
-
-GITHUB_OWNER = os.getenv("GITHUB_OWNER", DEFAULT_GITHUB_OWNER)
-GITHUB_REPO = os.getenv("GITHUB_REPO", DEFAULT_GITHUB_REPO)
-GITHUB_BRANCH = os.getenv("GITHUB_BRANCH", DEFAULT_GITHUB_BRANCH)
-
-# Gemini model can be changed without modifying the code.
-# The current Google documentation shows Gemini 3.8 Flash.
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-
-# GitHub cache lifetime.
-# 15 minutes means we don't hit GitHub on every button click.
-GITHUB_CACHE_TTL = 900
-
-
-# ============================================================
-# 3. SAFE SECRETS
-# ============================================================
-
-def get_secret(name: str, default: str = "") -> str:
-    """
-    Read a secret from Streamlit Secrets first,
-    then from environment variables.
-    """
-
-    try:
-        value = st.secrets.get(name, "")
-        if value:
-            return str(value)
-    except Exception:
-        pass
-
-    return os.getenv(name, default)
-
-
-ADMIN_PASSWORD = get_secret("ADMIN_PASSWORD", "")
-GEMINI_API_KEY = get_secret("GEMINI_API_KEY", "")
-
-
-# ============================================================
-# 4. SESSION STATE
-# ============================================================
-
-if "custom_system_instruction" not in st.session_state:
-    st.session_state["custom_system_instruction"] = """
-You are the official translation assistant for Tasuqilt DZ.
-
-Your task is to translate news and institutional texts accurately.
-
-ABSOLUTE RULES:
-
-1. The supplied Tasuqilt terminology and translation memory have priority.
-2. Do not invent an official Tamazight term when an approved term is supplied.
-3. Do not replace an approved term with a different synonym.
-4. Preserve names, numbers, dates, institutions and factual information.
-5. Do not add explanations, comments or notes.
-6. Return only the requested translation.
-7. When the supplied database does not contain an exact equivalent,
-   use the closest supplied terminology and examples.
-8. Never pretend that a term is official if it was not supplied by Tasuqilt.
-""".strip()
-
-if "last_translation" not in st.session_state:
-    st.session_state["last_translation"] = ""
-
-if "last_retrieval" not in st.session_state:
-    st.session_state["last_retrieval"] = {}
-
-if "admin_mode" not in st.session_state:
-    st.session_state["admin_mode"] = False
-
-
-# ============================================================
-# 5. NORMALIZATION
-# ============================================================
-
-def normalize_text(text: str) -> str:
-    """
-    Normalize text for searching without destroying the original.
-    """
-
-    if not text:
-        return ""
-
-    text = text.replace("\u00A0", " ")
-    text = text.replace("’", "'")
-    text = text.replace("“", '"')
-    text = text.replace("”", '"')
-
-    # Remove excessive spaces
-    text = re.sub(r"\s+", " ", text)
-
-    return text.strip().lower()
-
-
-def tokenize(text: str) -> List[str]:
-    """
-    Basic multilingual tokenizer.
-    """
-
-    text = normalize_text(text)
-
-    return re.findall(
-        r"[a-zA-ZÀ-ÖØ-öø-ÿɛƐɣƔʷṭḍṛṣẓčžǧ']+|[\u0600-\u06FF]+|\d+",
-        text,
-        flags=re.UNICODE
-    )
-
-
-# ============================================================
-# 6. BUILT-IN OFFICIAL TERMINOLOGY
-# ============================================================
-#
-# These are your current mandatory terms.
-#
-# Later we can move all of them to lexicon.csv.
-# ============================================================
-
-DEFAULT_TERMINOLOGY = [
+OFFICIAL_TERMINOLOGY = [
     {
-        "source": "président de la république",
+        "source": "Président de la République",
         "target": "Aselway n Tegduda",
-        "priority": 100
     },
     {
-        "source": "président de la République",
-        "target": "Aselway n Tegduda",
-        "priority": 100
+        "source": "Président",
+        "target": "Aselway",
     },
     {
         "source": "le président",
         "target": "Aselway",
-        "priority": 90
     },
     {
-        "source": "président",
-        "target": "Aselway",
-        "priority": 90
-    },
-    {
-        "source": "رئيس الجمهورية",
-        "target": "Aselway n Tegduda",
-        "priority": 100
-    },
-    {
-        "source": "رئيس",
-        "target": "Aselway",
-        "priority": 90
-    },
-    {
-        "source": "alger",
-        "target": "DZAYER TAMANEƔT",
-        "priority": 100
-    },
-    {
-        "source": "الجزائر",
-        "target": "DZAYER TAMANEƔT",
-        "priority": 100
-    },
-    {
-        "source": "conseil des ministres",
+        "source": "Conseil des ministres",
         "target": "Aseqqamu n Yineɣlaf",
-        "priority": 100
     },
     {
-        "source": "مجلس الوزراء",
-        "target": "Aseqqamu n Yineɣlaf",
-        "priority": 100
-    },
-    {
-        "source": "réunion",
+        "source": "Réunion",
         "target": "Timlilt",
-        "priority": 90
     },
     {
-        "source": "اجتماع",
-        "target": "Timlilt",
-        "priority": 90
+        "source": "Alger",
+        "target": "DZAYER TAMANEƔT",
     },
     {
-        "source": "gouvernement",
+        "source": "Gouvernement",
         "target": "Anabaḍ",
-        "priority": 90
-    },
-    {
-        "source": "الحكومة",
-        "target": "Anabaḍ",
-        "priority": 90
     },
 ]
 
+DIRECTIONS = {
+    "Français → Tamazight": {
+        "source": "fr",
+        "target": "tz",
+    },
+    "العربية → Tamazight": {
+        "source": "ar",
+        "target": "tz",
+    },
+    "Tamazight → Français": {
+        "source": "tz",
+        "target": "fr",
+    },
+    "Tamazight → العربية": {
+        "source": "tz",
+        "target": "ar",
+    },
+}
+
 
 # ============================================================
-# 7. GITHUB ACCESS
+# 2. STREAMLIT PAGE
 # ============================================================
 
-def github_headers() -> Dict[str, str]:
-    """
-    Public repository does not require authentication.
-    If later you make the repository private, you can add
-    GITHUB_TOKEN through Streamlit Secrets.
-    """
+st.set_page_config(
+    page_title=APP_TITLE,
+    page_icon="🌿",
+    layout="wide",
+)
 
+st.title("🌿 Tasuqilt DZ")
+st.caption(
+    "منصة الترجمة الأمازيغية المعيارية "
+    "للخطاب الإعلامي والصحفي"
+)
+
+
+# ============================================================
+# 3. SECRETS AND SETTINGS
+# ============================================================
+
+def get_setting(name, default=""):
+    """Read a setting from Streamlit Secrets or environment."""
+
+    try:
+        value = st.secrets.get(name, default)
+        if value:
+            return str(value).strip()
+    except Exception:
+        pass
+
+    return str(os.environ.get(name, default)).strip()
+
+
+GITHUB_TOKEN = get_setting("GITHUB_TOKEN")
+GEMINI_API_KEY = get_setting("GEMINI_API_KEY")
+GEMINI_MODEL = get_setting(
+    "GEMINI_MODEL",
+    DEFAULT_GEMINI_MODEL,
+)
+
+REQUEST_TIMEOUT = 30
+MAX_FILE_SIZE = 8 * 1024 * 1024
+
+
+# ============================================================
+# 4. TEXT NORMALIZATION
+# ============================================================
+
+def normalize_text(value):
+    """Normalize text for exact matching without removing Amazigh letters."""
+
+    if value is None:
+        return ""
+
+    text = unicodedata.normalize("NFKC", str(value))
+    text = text.replace("\u00a0", " ")
+    text = text.replace("\u200b", "")
+
+    text = re.sub(r"\s+", " ", text).strip()
+
+    return text.casefold()
+
+
+def normalize_for_search(value):
+    """Create a searchable representation while preserving word boundaries."""
+
+    text = normalize_text(value)
+    text = re.sub(r"[^\w\s]", " ", text, flags=re.UNICODE)
+    text = re.sub(r"\s+", " ", text).strip()
+
+    return text
+
+
+def is_empty(value):
+    return value is None or not str(value).strip()
+
+
+def clean_cell(value):
+    if value is None:
+        return ""
+
+    return str(value).strip()
+
+
+# ============================================================
+# 5. GITHUB CONNECTION
+# ============================================================
+
+def github_headers():
     headers = {
         "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2026-03-10",
-        "User-Agent": "Tasuqilt-DZ"
+        "User-Agent": "Tasuqilt-DZ",
+        "X-GitHub-Api-Version": "2022-11-28",
     }
 
-    github_token = get_secret("GITHUB_TOKEN", "")
-
-    if github_token:
-        headers["Authorization"] = f"Bearer {github_token}"
+    if GITHUB_TOKEN:
+        headers["Authorization"] = f"Bearer {GITHUB_TOKEN}"
 
     return headers
 
 
-@st.cache_data(ttl=GITHUB_CACHE_TTL, max_entries=2)
-def get_github_tree() -> List[Dict]:
-    """
-    Get the complete repository tree.
-
-    We intentionally inspect the repository tree rather than blindly
-    reading every file.
-    """
-
-    url = (
-        f"https://api.github.com/repos/"
-        f"{GITHUB_OWNER}/{GITHUB_REPO}/git/trees/"
-        f"{GITHUB_BRANCH}?recursive=1"
-    )
-
+def github_request(url):
     response = requests.get(
         url,
         headers=github_headers(),
-        timeout=20
+        timeout=REQUEST_TIMEOUT,
     )
 
     response.raise_for_status()
-
-    data = response.json()
-
-    if data.get("truncated"):
-        raise RuntimeError(
-            "GitHub returned a truncated file tree. "
-            "The repository contains too many files."
-        )
-
-    return data.get("tree", [])
+    return response
 
 
-def github_raw_url(path: str) -> str:
-    return (
-        f"https://raw.githubusercontent.com/"
-        f"{GITHUB_OWNER}/{GITHUB_REPO}/"
-        f"{GITHUB_BRANCH}/{path}"
+@st.cache_data(ttl=300, show_spinner=False)
+def fetch_repository_files():
+    """
+    Read the repository tree and download supported data files.
+    The Excel translation memory is supported.
+    """
+
+    repo_response = github_request(GITHUB_API)
+    repo_info = repo_response.json()
+
+    default_branch = repo_info.get("default_branch", "main")
+
+    tree_url = (
+        f"{GITHUB_API}/git/trees/"
+        f"{default_branch}?recursive=1"
     )
 
+    tree_response = github_request(tree_url)
+    tree_data = tree_response.json()
 
-# ============================================================
-# 8. WHICH FILES ARE DATA FILES?
-# ============================================================
+    if tree_data.get("truncated"):
+        raise RuntimeError(
+            "GitHub أعاد شجرة ملفات غير مكتملة."
+        )
 
-ALLOWED_EXTENSIONS = {
-    ".txt",
-    ".md",
-    ".csv",
-    ".json",
-    ".docx"
-}
+    files = {}
 
-IGNORED_DIRECTORIES = {
-    ".git",
-    ".github",
-    "__pycache__",
-    ".streamlit",
-    "venv",
-    ".venv"
-}
-
-IGNORED_FILES = {
-    "app.py",
-    "requirements.txt",
-    "README.md"
-}
-
-
-def is_data_file(path: str) -> bool:
-    """
-    We do NOT send arbitrary source code to the AI.
-
-    We only read files intended to contain linguistic data.
-    """
-
-    normalized_path = path.replace("\\", "/")
-    parts = normalized_path.split("/")
-
-    if any(part in IGNORED_DIRECTORIES for part in parts):
-        return False
-
-    filename = parts[-1]
-
-    if filename in IGNORED_FILES:
-        return False
-
-    extension = os.path.splitext(filename)[1].lower()
-
-    if extension not in ALLOWED_EXTENSIONS:
-        return False
-
-    # Strong preference for the data directory.
-    # But we also allow root-level tm.docx because you currently have it.
-    if "data" in parts:
-        return True
-
-    if filename.lower() in {
-        "tm.docx",
-        "translation_memory.csv",
-        "lexicon.csv",
-        "terminology.csv",
-        "corpus.txt",
-        "corpus.md",
-        "terminology.json",
-        "lexicon.json"
-    }:
-        return True
-
-    return False
-
-
-# ============================================================
-# 9. READ DATA FILES
-# ============================================================
-
-def decode_text(content: bytes) -> str:
-    for encoding in ("utf-8-sig", "utf-8", "cp1256", "latin-1"):
-        try:
-            return content.decode(encoding)
-        except Exception:
+    for item in tree_data.get("tree", []):
+        if item.get("type") != "blob":
             continue
 
-    return content.decode("utf-8", errors="ignore")
+        path = item.get("path", "")
+        filename = path.rsplit("/", 1)[-1]
+        extension = os.path.splitext(filename)[1].lower()
 
-
-def read_docx(content: bytes) -> Tuple[str, List[Dict]]:
-    """
-    Supports:
-    - paragraphs
-    - simple tables
-
-    Existing @ format:
-    Tamazight @ Foreign
-
-    Example:
-    Aselway n Tegduda @ Président de la République
-    """
-
-    doc = Document(io.BytesIO(content))
-
-    paragraphs = []
-    pairs = []
-
-    for paragraph in doc.paragraphs:
-        text = paragraph.text.strip()
-
-        if not text:
+        # Only read supported files in the repository root.
+        if "/" in path:
             continue
 
-        paragraphs.append(text)
+        if extension not in ALLOWED_EXTENSIONS:
+            continue
 
-        if "@" in text:
-            parts = text.split("@", 1)
+        if filename.startswith("."):
+            continue
 
-            left = parts[0].strip()
-            right = parts[1].strip()
+        if item.get("size", 0) > MAX_FILE_SIZE:
+            continue
 
-            if left and right:
-                pairs.append({
-                    "source": right,
-                    "target": left,
-                    "origin": "GitHub DOCX"
-                })
-
-    # Tables
-    for table in doc.tables:
-        for row in table.rows:
-
-            cells = [
-                cell.text.strip()
-                for cell in row.cells
-            ]
-
-            if len(cells) >= 2 and cells[0] and cells[1]:
-
-                pairs.append({
-                    "source": cells[0],
-                    "target": cells[1],
-                    "origin": "GitHub DOCX table"
-                })
-
-    return "\n".join(paragraphs), pairs
-
-
-def read_csv_file(content: bytes) -> Tuple[str, List[Dict]]:
-
-    text = decode_text(content)
-
-    rows = []
-
-    try:
-        reader = csv.DictReader(io.StringIO(text))
-
-        if reader.fieldnames:
-
-            fields = {
-                field.strip().lower(): field
-                for field in reader.fieldnames
-                if field
-            }
-
-            source_field = None
-            target_field = None
-
-            for candidate in [
-                "source",
-                "foreign",
-                "original",
-                "français",
-                "french",
-                "arabe",
-                "arabic"
-            ]:
-                if candidate in fields:
-                    source_field = fields[candidate]
-                    break
-
-            for candidate in [
-                "target",
-                "tamazight",
-                "amazigh",
-                "translation"
-            ]:
-                if candidate in fields:
-                    target_field = fields[candidate]
-                    break
-
-            if source_field and target_field:
-
-                for row in reader:
-
-                    source = (row.get(source_field) or "").strip()
-                    target = (row.get(target_field) or "").strip()
-
-                    if source and target:
-
-                        rows.append({
-                            "source": source,
-                            "target": target,
-                            "origin": "GitHub CSV"
-                        })
-
-    except Exception:
-        pass
-
-    return text, rows
-
-
-def read_json_file(content: bytes) -> Tuple[str, List[Dict]]:
-
-    text = decode_text(content)
-
-    pairs = []
-
-    try:
-        data = json.loads(text)
-
-        if isinstance(data, list):
-
-            for item in data:
-
-                if not isinstance(item, dict):
-                    continue
-
-                source = (
-                    item.get("source")
-                    or item.get("foreign")
-                    or item.get("original")
-                    or item.get("fr")
-                )
-
-                target = (
-                    item.get("target")
-                    or item.get("tamazight")
-                    or item.get("amazigh")
-                    or item.get("translation")
-                )
-
-                if source and target:
-
-                    pairs.append({
-                        "source": str(source).strip(),
-                        "target": str(target).strip(),
-                        "origin": "GitHub JSON"
-                    })
-
-        elif isinstance(data, dict):
-
-            for source, target in data.items():
-
-                if isinstance(target, str):
-
-                    pairs.append({
-                        "source": str(source).strip(),
-                        "target": target.strip(),
-                        "origin": "GitHub JSON"
-                    })
-
-    except Exception:
-        pass
-
-    return text, pairs
-
-
-def read_data_file(path: str, content: bytes) -> Tuple[str, List[Dict]]:
-
-    extension = os.path.splitext(path)[1].lower()
-
-    if extension == ".docx":
-        return read_docx(content)
-
-    if extension == ".csv":
-        return read_csv_file(content)
-
-    if extension == ".json":
-        return read_json_file(content)
-
-    return decode_text(content), []
-
-
-@st.cache_data(ttl=GITHUB_CACHE_TTL, max_entries=2)
-def load_github_knowledge() -> Dict:
-
-    tree = get_github_tree()
-
-    data_files = [
-        item
-        for item in tree
-        if item.get("type") == "blob"
-        and is_data_file(item.get("path", ""))
-    ]
-
-    all_text = []
-    translation_memory = []
-    loaded_files = []
-    errors = []
-
-    # Safety limit.
-    # This prevents accidentally downloading hundreds of large files.
-    data_files = data_files[:100]
-
-    for item in data_files:
-
-        path = item["path"]
+        raw_url = (
+            f"https://raw.githubusercontent.com/"
+            f"{GITHUB_OWNER}/{GITHUB_REPO}/"
+            f"{default_branch}/{requests.utils.quote(path)}"
+        )
 
         try:
-
-            raw_url = github_raw_url(path)
-
             response = requests.get(
                 raw_url,
                 headers={
-                    "User-Agent": "Tasuqilt-DZ"
+                    "User-Agent": "Tasuqilt-DZ",
                 },
-                timeout=20
+                timeout=REQUEST_TIMEOUT,
             )
-
             response.raise_for_status()
 
-            content = response.content
+            files[filename] = {
+                "content": response.content,
+                "path": path,
+                "size": item.get("size", 0),
+            }
 
-            # Avoid loading very large files.
-            if len(content) > 8 * 1024 * 1024:
-                errors.append(
-                    f"{path}: file larger than 8 MB skipped."
-                )
-                continue
-
-            text, pairs = read_data_file(
-                path,
-                content
-            )
-
-            if text:
-                all_text.append(
-                    f"\n===== FILE: {path} =====\n{text}"
-                )
-
-            translation_memory.extend(pairs)
-
-            loaded_files.append(path)
-
-        except Exception as error:
-
-            errors.append(
-                f"{path}: {str(error)}"
-            )
+        except Exception as exc:
+            files[filename] = {
+                "error": str(exc),
+                "path": path,
+                "size": item.get("size", 0),
+            }
 
     return {
-        "files": loaded_files,
-        "text": "\n".join(all_text),
-        "tm": translation_memory,
-        "errors": errors
+        "branch": default_branch,
+        "files": files,
     }
 
 
 # ============================================================
-# 10. MERGE BUILT-IN TERMINOLOGY WITH GITHUB TERMINOLOGY
+# 6. TRANSLATION MEMORY PARSERS
 # ============================================================
 
-def build_terminology(knowledge: Dict) -> List[Dict]:
+def looks_like_header(first, second):
+    """Detect common source/target column headings."""
 
-    terminology = list(DEFAULT_TERMINOLOGY)
+    a = normalize_text(first)
+    b = normalize_text(second)
 
-    for pair in knowledge.get("tm", []):
+    source_headers = {
+        "français", "francais", "french", "source",
+        "texte source", "original", "original text",
+        "fr", "arabic", "العربية",
+    }
 
-        source = pair.get("source", "").strip()
-        target = pair.get("target", "").strip()
+    target_headers = {
+        "tamazight", "amazigh", "kabyle", "target",
+        "translation", "traduction", "destination",
+        "tz", "berbère", "berbere",
+    }
 
-        if source and target:
+    return a in source_headers and b in target_headers
 
-            terminology.append({
-                "source": source,
-                "target": target,
-                "priority": 80
-            })
 
-    # Remove duplicate normalized pairs
-    unique = {}
+def make_pair(source, target, origin=""):
+    source = clean_cell(source)
+    target = clean_cell(target)
 
-    for item in terminology:
+    if not source or not target:
+        return None
 
-        key = (
-            normalize_text(item["source"]),
-            normalize_text(item["target"])
+    if normalize_text(source) == normalize_text(target):
+        return None
+
+    return {
+        "source": source,
+        "target": target,
+        "origin": origin,
+    }
+
+
+def parse_excel(content, filename):
+    pairs = []
+
+    workbook = load_workbook(
+        io.BytesIO(content),
+        read_only=True,
+        data_only=True,
+    )
+
+    try:
+        sheet = None
+
+        for candidate in workbook.worksheets:
+            if candidate.title.strip().casefold() == "tm":
+                sheet = candidate
+                break
+
+        if sheet is None:
+            sheet = workbook.worksheets[0]
+
+        for row_number, row in enumerate(
+            sheet.iter_rows(min_col=1, max_col=2, values_only=True),
+            start=1,
+        ):
+            if not row or len(row) < 2:
+                continue
+
+            source = clean_cell(row[0])
+            target = clean_cell(row[1])
+
+            if not source or not target:
+                continue
+
+            if row_number == 1 and looks_like_header(
+                source, target
+            ):
+                continue
+
+            pair = make_pair(
+                source,
+                target,
+                origin=filename,
+            )
+
+            if pair:
+                pairs.append(pair)
+
+    finally:
+        workbook.close()
+
+    return pairs
+
+
+def parse_csv(content, filename):
+    pairs = []
+
+    try:
+        df = pd.read_csv(
+            io.BytesIO(content),
+            dtype=str,
+            keep_default_na=False,
+            encoding="utf-8-sig",
+        )
+    except Exception:
+        df = pd.read_csv(
+            io.BytesIO(content),
+            dtype=str,
+            keep_default_na=False,
+            encoding="latin-1",
         )
 
-        unique[key] = item
+    if len(df.columns) < 2:
+        return pairs
 
-    result = list(unique.values())
+    for index, row in df.iterrows():
+        source = clean_cell(row.iloc[0])
+        target = clean_cell(row.iloc[1])
 
-    result.sort(
-        key=lambda x: (
-            x.get("priority", 0),
-            len(x.get("source", ""))
-        ),
-        reverse=True
+        if index == 0 and looks_like_header(source, target):
+            continue
+
+        pair = make_pair(source, target, filename)
+
+        if pair:
+            pairs.append(pair)
+
+    return pairs
+
+
+def parse_json_pairs(content, filename):
+    pairs = []
+
+    try:
+        data = json.loads(content.decode("utf-8-sig"))
+    except Exception:
+        return pairs
+
+    if isinstance(data, dict):
+        if isinstance(data.get("pairs"), list):
+            data = data["pairs"]
+        elif isinstance(data.get("translations"), list):
+            data = data["translations"]
+        else:
+            data = [data]
+
+    if not isinstance(data, list):
+        return pairs
+
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+
+        source = (
+            item.get("source")
+            or item.get("fr")
+            or item.get("french")
+            or item.get("français")
+            or item.get("original")
+        )
+
+        target = (
+            item.get("target")
+            or item.get("tz")
+            or item.get("tamazight")
+            or item.get("amazigh")
+            or item.get("translation")
+        )
+
+        pair = make_pair(source, target, filename)
+
+        if pair:
+            pairs.append(pair)
+
+    return pairs
+
+
+def parse_docx_pairs(content, filename):
+    pairs = []
+
+    document = Document(io.BytesIO(content))
+
+    # Paragraph format: source @ target
+    for paragraph in document.paragraphs:
+        text = paragraph.text.strip()
+
+        if "@" not in text:
+            continue
+
+        source, target = text.split("@", 1)
+
+        pair = make_pair(source, target, filename)
+
+        if pair:
+            pairs.append(pair)
+
+    # Table format: first cell = source, second cell = target
+    for table in document.tables:
+        for row_number, row in enumerate(table.rows):
+            if len(row.cells) < 2:
+                continue
+
+            source = row.cells[0].text.strip()
+            target = row.cells[1].text.strip()
+
+            if row_number == 0 and looks_like_header(
+                source, target
+            ):
+                continue
+
+            pair = make_pair(source, target, filename)
+
+            if pair:
+                pairs.append(pair)
+
+    return pairs
+
+
+def parse_text_pairs(content, filename):
+    pairs = []
+
+    text = content.decode("utf-8-sig", errors="replace")
+
+    for line in text.splitlines():
+        line = line.strip()
+
+        if "@" not in line:
+            continue
+
+        source, target = line.split("@", 1)
+
+        pair = make_pair(source, target, filename)
+
+        if pair:
+            pairs.append(pair)
+
+    return pairs
+
+
+def parse_data_file(filename, content):
+    extension = os.path.splitext(filename)[1].lower()
+
+    if extension == ".xlsx":
+        return parse_excel(content, filename)
+
+    if extension == ".csv":
+        return parse_csv(content, filename)
+
+    if extension == ".json":
+        return parse_json_pairs(content, filename)
+
+    if extension == ".docx":
+        return parse_docx_pairs(content, filename)
+
+    if extension in {".txt", ".md"}:
+        return parse_text_pairs(content, filename)
+
+    return []
+
+
+# ============================================================
+# 7. TERMINOLOGY LOADING
+# ============================================================
+
+def parse_terminology_file(filename, content):
+    """
+    Terminology files should contain short terms or expressions,
+    not entire news articles or general TM sentences.
+    """
+
+    extension = os.path.splitext(filename)[1].lower()
+    terms = []
+
+    if extension == ".csv":
+        try:
+            df = pd.read_csv(
+                io.BytesIO(content),
+                dtype=str,
+                keep_default_na=False,
+                encoding="utf-8-sig",
+            )
+        except Exception:
+            return terms
+
+        if len(df.columns) < 2:
+            return terms
+
+        for _, row in df.iterrows():
+            source = clean_cell(row.iloc[0])
+            target = clean_cell(row.iloc[1])
+
+            if source and target:
+                terms.append({
+                    "source": source,
+                    "target": target,
+                })
+
+    elif extension == ".json":
+        try:
+            data = json.loads(content.decode("utf-8-sig"))
+        except Exception:
+            return terms
+
+        if isinstance(data, dict):
+            data = data.get("terms", data.get("terminology", data))
+
+        if isinstance(data, dict):
+            for source, target in data.items():
+                if isinstance(target, str):
+                    terms.append({
+                        "source": str(source).strip(),
+                        "target": target.strip(),
+                    })
+
+        elif isinstance(data, list):
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+
+                source = item.get("source") or item.get("fr")
+                target = item.get("target") or item.get("tamazight")
+
+                if source and target:
+                    terms.append({
+                        "source": str(source).strip(),
+                        "target": str(target).strip(),
+                    })
+
+    return terms
+
+
+def build_terminology(files):
+    """
+    Official terminology is separate from the translation memory.
+    Never convert every TM sentence into an official term.
+    """
+
+    terminology = list(OFFICIAL_TERMINOLOGY)
+
+    allowed_names = {
+        "terminology.csv",
+        "lexicon.csv",
+        "terminology.json",
+        "lexicon.json",
+    }
+
+    for filename, file_info in files.items():
+        if filename.lower() not in allowed_names:
+            continue
+
+        if "content" not in file_info:
+            continue
+
+        terminology.extend(
+            parse_terminology_file(
+                filename,
+                file_info["content"],
+            )
+        )
+
+    unique = {}
+    for term in terminology:
+        source = term.get("source", "").strip()
+        target = term.get("target", "").strip()
+
+        if not source or not target:
+            continue
+
+        key = normalize_text(source)
+
+        if key not in unique:
+            unique[key] = {
+                "source": source,
+                "target": target,
+            }
+
+    return list(unique.values())
+
+
+# ============================================================
+# 8. LOAD AND INDEX KNOWLEDGE
+# ============================================================
+
+@st.cache_data(ttl=300, show_spinner=False)
+def load_knowledge():
+    result = {
+        "connected": False,
+        "branch": "",
+        "files": {},
+        "pairs": [],
+        "terminology": [],
+        "errors": [],
+    }
+
+    try:
+        repository = fetch_repository_files()
+
+        result["connected"] = True
+        result["branch"] = repository["branch"]
+        result["files"] = repository["files"]
+
+    except Exception as exc:
+        result["errors"].append(
+            f"تعذّر الاتصال بمستودع GitHub: {exc}"
+        )
+        return result
+
+    all_pairs = []
+
+    for filename, file_info in result["files"].items():
+        if "error" in file_info:
+            result["errors"].append(
+                f"تعذّر تحميل {filename}: {file_info['error']}"
+            )
+            continue
+
+        try:
+            pairs = parse_data_file(
+                filename,
+                file_info["content"],
+            )
+
+            all_pairs.extend(pairs)
+
+        except Exception as exc:
+            result["errors"].append(
+                f"تعذّرت قراءة {filename}: {exc}"
+            )
+
+    # Remove duplicate source-target pairs.
+    unique_pairs = {}
+    for pair in all_pairs:
+        key = (
+            normalize_text(pair["source"]),
+            normalize_text(pair["target"]),
+        )
+
+        if key not in unique_pairs:
+            unique_pairs[key] = pair
+
+    result["pairs"] = list(unique_pairs.values())
+    result["terminology"] = build_terminology(
+        result["files"]
     )
 
     return result
 
 
 # ============================================================
-# 11. INTELLIGENT RETRIEVAL
+# 9. EXACT MATCH TRANSLATION
 # ============================================================
 
-def similarity(a: str, b: str) -> float:
+def exact_local_translation(text, direction, knowledge):
+    """
+    Exact matches only.
+    The local engine never fabricates a translation.
+    """
 
-    a = normalize_text(a)
-    b = normalize_text(b)
+    query = normalize_text(text)
 
-    if not a or not b:
+    if not query:
+        return None
+
+    pairs = knowledge["pairs"]
+
+    if direction == "Français → Tamazight":
+        for pair in pairs:
+            if normalize_text(pair["source"]) == query:
+                return pair["target"]
+
+        for term in knowledge["terminology"]:
+            if normalize_text(term["source"]) == query:
+                return term["target"]
+
+    elif direction == "Tamazight → Français":
+        for pair in pairs:
+            if normalize_text(pair["target"]) == query:
+                return pair["source"]
+
+        for term in knowledge["terminology"]:
+            if normalize_text(term["target"]) == query:
+                return term["source"]
+
+    # No exact Arabic pairs are assumed to exist in a French-Amazigh TM.
+    return None
+
+
+# ============================================================
+# 10. SMART RETRIEVAL
+# ============================================================
+
+def token_overlap_score(query, candidate):
+    query_tokens = set(normalize_for_search(query).split())
+    candidate_tokens = set(normalize_for_search(candidate).split())
+
+    if not query_tokens or not candidate_tokens:
         return 0.0
 
-    if a in b or b in a:
-        return 1.0
+    intersection = len(query_tokens & candidate_tokens)
+    union = len(query_tokens | candidate_tokens)
 
-    return difflib.SequenceMatcher(
+    jaccard = intersection / union if union else 0.0
+
+    sequence = SequenceMatcher(
         None,
-        a,
-        b
+        normalize_for_search(query),
+        normalize_for_search(candidate),
     ).ratio()
 
+    return max(jaccard, sequence * 0.7)
 
-def retrieve_context(
-    query: str,
-    knowledge: Dict,
-    terminology: List[Dict],
-    direction: str,
-    max_pairs: int = 8
-) -> Dict:
 
-    query_norm = normalize_text(query)
-    query_tokens = set(tokenize(query))
+def retrieve_context(text, direction, knowledge, limit=6):
+    """
+    Retrieve similar examples from the correct side of the TM.
+    Reverse translation searches the Amazigh target column.
+    """
 
-    # --------------------------------------------------------
-    # 11.1 Relevant terminology
-    # --------------------------------------------------------
+    if direction == "Français → Tamazight":
+        source_key = "source"
+        target_key = "target"
 
-    matched_terms = []
+    elif direction == "Tamazight → Français":
+        source_key = "target"
+        target_key = "source"
+
+    else:
+        # The current TM is French-Amazigh.
+        # For Arabic input, French/Amazigh examples may help Gemini,
+        # but they are not presented as exact Arabic matches.
+        source_key = None
+        target_key = None
+
+    if source_key is None:
+        return []
+
+    scored = []
+
+    for pair in knowledge["pairs"]:
+        candidate = pair[source_key]
+
+        score = token_overlap_score(text, candidate)
+
+        if score >= 0.16:
+            scored.append({
+                "source": candidate,
+                "target": pair[target_key],
+                "score": score,
+            })
+
+    scored.sort(
+        key=lambda item: item["score"],
+        reverse=True,
+    )
+
+    return scored[:limit]
+
+
+def format_context(examples):
+    if not examples:
+        return "لا توجد أمثلة قريبة كافية في ذاكرة الترجمة."
+
+    lines = []
+
+    for index, example in enumerate(examples, start=1):
+        lines.append(
+            f"{index}. المصدر: {example['source']}\n"
+            f"   المقابل: {example['target']}"
+        )
+
+    return "\n".join(lines)
+
+
+# ============================================================
+# 11. TERM VALIDATION
+# ============================================================
+
+def validate_translation(source_text, translated_text, terminology):
+    """
+    Warn only when a relevant official term was omitted.
+    This is a terminology check, not a full linguistic validator.
+    """
+
+    source_normalized = normalize_for_search(source_text)
+    target_normalized = normalize_for_search(translated_text)
+
+    warnings = []
 
     for term in terminology:
+        source_term = term["source"].strip()
+        target_term = term["target"].strip()
 
-        source = term["source"]
-        target = term["target"]
+        normalized_source_term = normalize_for_search(source_term)
+        normalized_target_term = normalize_for_search(target_term)
 
-        source_norm = normalize_text(source)
-
-        if not source_norm:
+        if not normalized_source_term:
             continue
 
-        if source_norm in query_norm:
-
-            matched_terms.append({
-                **term,
-                "score": 1.0
-            })
-
+        # Avoid treating every long sentence as a term.
+        if len(normalized_source_term.split()) > 5:
             continue
 
-        # Token overlap
-        source_tokens = set(tokenize(source_norm))
+        if normalized_source_term in source_normalized:
+            if normalized_target_term not in target_normalized:
+                warnings.append(
+                    f"راجع المصطلح: «{source_term}» "
+                    f"والمقابل المعياري «{target_term}»."
+                )
 
-        if source_tokens and query_tokens:
-
-            overlap = len(
-                source_tokens.intersection(query_tokens)
-            ) / max(len(source_tokens), 1)
-
-            if overlap >= 0.50:
-
-                matched_terms.append({
-                    **term,
-                    "score": overlap
-                })
-
-    # Sort
-    matched_terms.sort(
-        key=lambda x: (
-            x["score"],
-            x.get("priority", 0),
-            len(x["source"])
-        ),
-        reverse=True
-    )
-
-    matched_terms = matched_terms[:20]
-
-    # --------------------------------------------------------
-    # 11.2 Translation Memory
-    # --------------------------------------------------------
-
-    tm_matches = []
-
-    for pair in knowledge.get("tm", []):
-
-        source = pair.get("source", "")
-        target = pair.get("target", "")
-
-        if not source or not target:
-            continue
-
-        score = similarity(
-            query_norm,
-            source
-        )
-
-        source_tokens = set(
-            tokenize(source)
-        )
-
-        overlap = 0.0
-
-        if source_tokens and query_tokens:
-
-            overlap = len(
-                source_tokens.intersection(query_tokens)
-            ) / max(len(source_tokens), 1)
-
-        final_score = max(
-            score,
-            overlap
-        )
-
-        # Exact / highly relevant
-        if (
-            normalize_text(source) in query_norm
-            or final_score >= 0.55
-        ):
-
-            tm_matches.append({
-                **pair,
-                "score": final_score
-            })
-
-    tm_matches.sort(
-        key=lambda x: (
-            x["score"],
-            len(x.get("source", ""))
-        ),
-        reverse=True
-    )
-
-    tm_matches = tm_matches[:max_pairs]
-
-    # --------------------------------------------------------
-    # 11.3 Exact Translation
-    # --------------------------------------------------------
-
-    exact_match = None
-
-    for pair in knowledge.get("tm", []):
-
-        if normalize_text(pair["source"]) == query_norm:
-
-            exact_match = pair
-            break
-
-    # --------------------------------------------------------
-    # 11.4 Build context
-    # --------------------------------------------------------
-
-    return {
-        "exact_match": exact_match,
-        "terms": matched_terms,
-        "tm_matches": tm_matches
-    }
+    return warnings
 
 
 # ============================================================
-# 12. DETERMINE CONFIDENCE
+# 12. GEMINI API
 # ============================================================
 
-def calculate_confidence(retrieval: Dict) -> int:
+def build_gemini_prompt(
+    source_text,
+    direction,
+    examples,
+    terminology,
+):
+    term_lines = []
 
-    if retrieval.get("exact_match"):
-        return 100
+    source_language = DIRECTIONS[direction]["source"]
 
-    terms = retrieval.get("terms", [])
-    matches = retrieval.get("tm_matches", [])
+    for term in terminology:
+        source_term = term["source"]
+        target_term = term["target"]
 
-    if terms and matches:
-        return 90
-
-    if terms:
-        return 80
-
-    if matches:
-        best = matches[0].get("score", 0)
-
-        return int(
-            min(75, max(50, best * 100))
-        )
-
-    return 0
-
-
-# ============================================================
-# 13. BUILD AI CONTEXT
-# ============================================================
-
-def build_ai_context(
-    retrieval: Dict,
-    direction: str
-) -> str:
-
-    sections = []
-
-    sections.append(
-        "TASUQILT OFFICIAL TERMINOLOGY:\n"
-    )
-
-    terms = retrieval.get("terms", [])
-
-    if terms:
-
-        for term in terms:
-
-            sections.append(
-                f"- {term['source']} = {term['target']}"
+        if source_language == "fr":
+            term_lines.append(
+                f"{source_term} → {target_term}"
             )
 
-    else:
-
-        sections.append(
-            "- No matching official term was found."
-        )
-
-    sections.append(
-        "\nTASUQILT TRANSLATION MEMORY EXAMPLES:\n"
-    )
-
-    matches = retrieval.get("tm_matches", [])
-
-    if matches:
-
-        for index, pair in enumerate(matches, 1):
-
-            sections.append(
-                f"{index}. SOURCE: {pair['source']}\n"
-                f"   TAMAZIGHT: {pair['target']}\n"
+        elif source_language == "tz":
+            term_lines.append(
+                f"{target_term} → {source_term}"
             )
 
+    if not term_lines:
+        term_block = "لا توجد قائمة مصطلحات إضافية."
     else:
+        term_block = "\n".join(term_lines[:100])
 
-        sections.append(
-            "- No relevant translation-memory example was found."
+    if direction == "Français → Tamazight":
+        instruction = (
+            "Translate from French into standard written Amazigh "
+            "using Latin script."
         )
 
-    sections.append(
-        "\nIMPORTANT:"
-    )
+    elif direction == "العربية → Tamazight":
+        instruction = (
+            "Translate from Arabic into standard written Amazigh "
+            "using Latin script. Preserve the full meaning and "
+            "journalistic register."
+        )
 
-    sections.append(
-        "The above information comes from the Tasuqilt knowledge base."
-    )
+    elif direction == "Tamazight → Français":
+        instruction = (
+            "Translate from Amazigh written in Latin script into French."
+        )
 
-    sections.append(
-        "It has priority over general linguistic preferences."
-    )
+    else:
+        instruction = (
+            "Translate from Amazigh written in Latin script into Arabic."
+        )
 
-    sections.append(
-        "Do not invent an official equivalent when an approved term is supplied."
-    )
+    return f"""
+You are the translation engine of Tasuqilt DZ, a platform for
+rigorous standard Amazigh translation for Algerian news journalism.
 
-    return "\n".join(sections)
+TASK:
+{instruction}
+
+EDITORIAL RULES:
+- Preserve the source meaning, facts, names, numbers, dates and quotations.
+- Do not add facts that are absent from the source.
+- Use clear, formal journalistic language.
+- Follow the supplied terminology consistently whenever applicable.
+- The approved translation of "Président" is "Aselway".
+- The approved translation of "Réunion" is "Timlilt".
+- Do not use "Anmazul" as a translation of "Président".
+- Do not explain your choices.
+- Return only the translated text, with no introduction or quotation marks.
+- Do not claim that a result is an exact database match unless it is one.
+
+RETRIEVED TRANSLATION MEMORY EXAMPLES:
+{format_context(examples)}
+
+APPROVED TERMINOLOGY:
+{term_block}
+
+TEXT TO TRANSLATE:
+{source_text}
+""".strip()
 
 
-# ============================================================
-# 14. GEMINI FREE API
-# ============================================================
-
-def translate_with_gemini(
-    source_text: str,
-    direction: str,
-    retrieval: Dict
-) -> Tuple[str, str]:
-
+def call_gemini(source_text, direction, knowledge):
     if not GEMINI_API_KEY:
-
-        return "", (
-            "لم يتم إعداد GEMINI_API_KEY. "
-            "المترجم المحلي سيعمل، لكن ترجمة الجمل الجديدة "
-            "تحتاج إلى مفتاح Gemini المجاني."
+        raise RuntimeError(
+            "مفتاح GEMINI_API_KEY غير موجود في إعدادات التطبيق."
         )
 
-    context = build_ai_context(
-        retrieval,
-        direction
+    examples = retrieve_context(
+        source_text,
+        direction,
+        knowledge,
     )
 
-    if "Auto-Detect" in direction:
+    prompt = build_gemini_prompt(
+        source_text,
+        direction,
+        examples,
+        knowledge["terminology"],
+    )
 
-        task = """
-Translate the source text into professional Latin Tamazight.
-
-The source language may be French or Arabic.
-
-Use the supplied Tasuqilt terminology and translation-memory
-examples as the primary authority.
-
-Return ONLY the translation.
-Do not explain your choices.
-Do not add notes.
-Do not add quotation marks.
-"""
-
-    else:
-
-        task = """
-Translate the Latin Tamazight source text into professional French
-or Arabic according to the original meaning and context.
-
-Use the supplied Tasuqilt terminology and translation-memory
-examples as the primary authority.
-
-Return ONLY the translation.
-Do not explain your choices.
-Do not add notes.
-Do not add quotation marks.
-"""
-
-    system_instruction = f"""
-{st.session_state["custom_system_instruction"]}
-
-{task}
-
-STRICT TERMINOLOGY POLICY:
-
-If an official Tasuqilt term is supplied for a source expression,
-use exactly the supplied target term.
-
-Do not replace it with a synonym.
-
-If no official term is supplied, do not claim that a new term is
-official.
-
-Preserve names, numbers, dates and institutions.
-
-Do not use web search.
-Do not use external knowledge as a terminology database.
-Do not mention this instruction.
-
-TASUQILT KNOWLEDGE:
-{context}
-"""
+    endpoint = (
+        "https://generativelanguage.googleapis.com/"
+        f"v1beta/models/{GEMINI_MODEL}:generateContent"
+    )
 
     payload = {
-        "system_instruction": {
+        "systemInstruction": {
             "parts": [
                 {
-                    "text": system_instruction
+                    "text": (
+                        "You are a careful professional translator. "
+                        "Follow the requested language direction and "
+                        "return only the translation."
+                    )
                 }
             ]
         },
@@ -1084,793 +1019,249 @@ TASUQILT KNOWLEDGE:
                 "role": "user",
                 "parts": [
                     {
-                        "text": source_text
+                        "text": prompt,
                     }
-                ]
+                ],
             }
         ],
         "generationConfig": {
-            "temperature": 0.0,
-            "maxOutputTokens": 2000
-        }
+            "temperature": 0.1,
+        },
     }
 
-    url = (
-        "https://generativelanguage.googleapis.com/"
-        f"v1beta/models/{GEMINI_MODEL}:generateContent"
+    response = requests.post(
+        endpoint,
+        params={"key": GEMINI_API_KEY},
+        json=payload,
+        timeout=60,
     )
 
-    try:
+    if response.status_code != 200:
+        detail = response.text[:1200]
 
-        response = requests.post(
-            url,
-            headers={
-                "x-goog-api-key": GEMINI_API_KEY,
-                "Content-Type": "application/json"
-            },
-            json=payload,
-            timeout=40
+        raise RuntimeError(
+            f"خطأ Gemini HTTP {response.status_code}: {detail}"
         )
 
-        if response.status_code != 200:
+    data = response.json()
 
-            try:
-                error_data = response.json()
+    candidates = data.get("candidates", [])
 
-                message = (
-                    error_data
-                    .get("error", {})
-                    .get("message", "")
-                )
-
-            except Exception:
-
-                message = response.text[:500]
-
-            return "", (
-                f"Gemini لم يُرجع ترجمة. "
-                f"HTTP {response.status_code}. "
-                f"{message}"
-            )
-
-        data = response.json()
-
-        candidates = data.get("candidates", [])
-
-        if not candidates:
-
-            return "", "Gemini أعاد استجابة بدون نتيجة."
-
-        parts = (
-            candidates[0]
-            .get("content", {})
-            .get("parts", [])
+    if not candidates:
+        raise RuntimeError(
+            "لم يُرجع Gemini أي ترجمة. "
+            "قد يكون الطلب محجوبًا أو لم ينتج محتوى."
         )
 
-        output = "\n".join(
-            part.get("text", "")
-            for part in parts
-            if part.get("text")
-        ).strip()
+    parts = (
+        candidates[0]
+        .get("content", {})
+        .get("parts", [])
+    )
 
-        if not output:
+    translated = "\n".join(
+        part.get("text", "")
+        for part in parts
+        if part.get("text")
+    ).strip()
 
-            return "", "Gemini أعاد نصاً فارغاً."
-
-        return output, ""
-
-    except requests.exceptions.Timeout:
-
-        return "", (
-            "انتهت مهلة الاتصال بـ Gemini. "
-            "حاول مرة أخرى بعد قليل."
+    if not translated:
+        raise RuntimeError(
+            "أعاد Gemini استجابة فارغة."
         )
 
-    except Exception as error:
-
-        return "", f"خطأ في Gemini: {error}"
+    return translated, examples
 
 
 # ============================================================
-# 15. TERMINOLOGY VALIDATOR
+# 13. SIDEBAR AND DATA STATUS
 # ============================================================
 
-def validate_translation(
-    source_text: str,
-    output_text: str,
-    retrieval: Dict,
-    direction: str
-) -> Dict:
+with st.sidebar:
+    st.header("⚙️ إعدادات Tasuqilt")
 
-    if not output_text:
-
-        return {
-            "valid": False,
-            "warnings": ["الترجمة فارغة."],
-            "checked": 0,
-            "missing": []
-        }
-
-    warnings = []
-    missing = []
-
-    # We only enforce source → Tamazight here.
-    # For reverse translation we still display terminology
-    # information but do not incorrectly reject French/Arabic.
-    if "Auto-Detect" not in direction:
-
-        return {
-            "valid": True,
-            "warnings": [],
-            "checked": 0,
-            "missing": []
-        }
-
-    output_norm = normalize_text(output_text)
-
-    for term in retrieval.get("terms", []):
-
-        source = term["source"]
-        target = term["target"]
-
-        source_norm = normalize_text(source)
-
-        # If the source expression appears in input,
-        # the official target should normally appear in output.
-        if source_norm in normalize_text(source_text):
-
-            target_norm = normalize_text(target)
-
-            if target_norm not in output_norm:
-
-                missing.append({
-                    "source": source,
-                    "expected": target
-                })
-
-    if missing:
-
-        for item in missing:
-
-            warnings.append(
-                f"المصطلح الرسمي غير موجود في الناتج: "
-                f"{item['source']} → {item['expected']}"
-            )
-
-        return {
-            "valid": False,
-            "warnings": warnings,
-            "checked": len(retrieval.get("terms", [])),
-            "missing": missing
-        }
-
-    return {
-        "valid": True,
-        "warnings": [],
-        "checked": len(retrieval.get("terms", [])),
-        "missing": []
-    }
-
-
-# ============================================================
-# 16. SAFE LOCAL TRANSLATION
-# ============================================================
-
-def exact_local_translation(
-    source_text: str,
-    knowledge: Dict,
-    direction: str
-) -> str:
-
-    query_norm = normalize_text(source_text)
-
-    # Exact TM
-    for pair in knowledge.get("tm", []):
-
-        if normalize_text(pair["source"]) == query_norm:
-
-            if "Auto-Detect" in direction:
-                return pair["target"]
-
-            # Reverse
-            if normalize_text(pair["target"]) == query_norm:
-                return pair["source"]
-
-    # Exact terminology
-    for term in DEFAULT_TERMINOLOGY:
-
-        if normalize_text(term["source"]) == query_norm:
-
-            if "Auto-Detect" in direction:
-                return term["target"]
-
-    return ""
-
-
-# ============================================================
-# 17. UI
-# ============================================================
-
-st.title("📖 Tasuqilt DZ 🇩🇿")
-
-st.markdown(
-    """
-    <p style='font-size:1.05rem;color:gray;'>
-    نظام ترجمة هجين يعتمد أولاً على قاعدة Tasuqilt الموجودة في GitHub،
-    ثم يستخدم Gemini المجاني فقط عند الحاجة.
-    </p>
-    """,
-    unsafe_allow_html=True
-)
-
-
-# ============================================================
-# 18. SIDEBAR
-# ============================================================
-
-st.sidebar.header("⚙️ Configuration")
-
-st.sidebar.info(
-    "هذا الإصدار لا يستخدم OpenAI أو Claude أو DeepSeek أو Grok "
-    "لأنك طلبت نظاماً مجانياً فقط."
-)
-
-engine_choice = st.sidebar.selectbox(
-    "محرك الترجمة:",
-    [
-        "Tasuqilt Local — بدون API",
-        "Gemini Free — عند الحاجة"
-    ]
-)
-
-direction = st.sidebar.selectbox(
-    "اتجاه الترجمة:",
-    [
-        "Auto-Detect [Français/Arabe] ➔ Tamazight",
-        "Tamazight ➔ Auto-Detect [Français/Arabe]"
-    ]
-)
-
-
-# ============================================================
-# 19. LOAD GITHUB KNOWLEDGE
-# ============================================================
-
-with st.spinner("🔄 قراءة قاعدة Tasuqilt من GitHub..."):
-
-    try:
-
-        knowledge = load_github_knowledge()
-
-        github_ok = True
-
-    except Exception as error:
-
-        knowledge = {
-            "files": [],
-            "text": "",
-            "tm": [],
-            "errors": [str(error)]
-        }
-
-        github_ok = False
-
-
-terminology = build_terminology(
-    knowledge
-)
-
-
-# ============================================================
-# 20. GITHUB STATUS
-# ============================================================
-
-if github_ok:
-
-    st.sidebar.success(
-        f"🟢 GitHub متصل — "
-        f"{len(knowledge['files'])} ملف بيانات"
+    engine_choice = st.selectbox(
+        "محرك الترجمة",
+        [
+            "Tasuqilt Local — مطابقة قاعدة البيانات فقط",
+            "Gemini — ترجمة بالذكاء الاصطناعي",
+        ],
+        index=0,
     )
 
-    st.sidebar.caption(
-        f"Translation Memory: {len(knowledge['tm'])} زوج ترجمة"
+    st.caption(
+        "المحرك المحلي لا يخترع ترجمة عند غياب المطابقة."
     )
 
-else:
+    st.divider()
 
-    st.sidebar.error(
-        "🔴 تعذر قراءة GitHub"
-    )
-
-    for error in knowledge.get("errors", [])[:3]:
-
-        st.sidebar.caption(error)
-
-
-if GEMINI_API_KEY:
-
-    st.sidebar.success(
-        "🟢 Gemini API مفعّل"
-    )
-
-else:
-
-    st.sidebar.warning(
-        "🟡 Gemini غير مفعّل — "
-        "المترجم المحلي فقط متاح."
-    )
-
-
-# ============================================================
-# 21. ADMIN
-# ============================================================
-
-st.sidebar.markdown("---")
-st.sidebar.subheader("🔐 Administration")
-
-admin_input = st.sidebar.text_input(
-    "Code d'accès admin:",
-    type="password"
-)
-
-if ADMIN_PASSWORD and admin_input == ADMIN_PASSWORD:
-
-    st.session_state["admin_mode"] = True
-
-elif admin_input:
-
-    st.sidebar.error(
-        "رمز الإدارة غير صحيح."
-    )
-
-
-if st.session_state["admin_mode"]:
-
-    st.sidebar.success(
-        "🔓 وضع الإدارة مفعّل"
-    )
-
-    updated_prompt = st.sidebar.text_area(
-        "System Instruction:",
-        value=st.session_state["custom_system_instruction"],
-        height=220
-    )
-
-    if st.sidebar.button(
-        "💾 حفظ التعليمات"
+    if st.button(
+        "🔄 تحديث بيانات GitHub",
+        use_container_width=True,
     ):
-
-        st.session_state[
-            "custom_system_instruction"
-        ] = updated_prompt
-
-        st.sidebar.success(
-            "تم حفظ التعليمات لهذه الجلسة."
-        )
-
-    st.sidebar.markdown("---")
-
-    st.sidebar.write(
-        "ملفات البيانات المقروءة:"
-    )
-
-    for filename in knowledge.get("files", []):
-
-        st.sidebar.caption(
-            f"📄 {filename}"
-        )
-
-    if knowledge.get("errors"):
-
-        st.sidebar.warning(
-            "بعض الملفات تم تجاوزها:"
-        )
-
-        for error in knowledge["errors"][:10]:
-
-            st.sidebar.caption(error)
-
-    if st.sidebar.button(
-        "🔄 تحديث قاعدة GitHub الآن"
-    ):
-
-        get_github_tree.clear()
-        load_github_knowledge.clear()
-
+        fetch_repository_files.clear()
+        load_knowledge.clear()
         st.rerun()
 
+    st.divider()
 
-# ============================================================
-# 22. EXPRESS DICTIONARY
-# ============================================================
+    st.markdown("**حالة الخدمات**")
 
-st.markdown(
-    "### 📖 Dictionnaire Express / القاموس الفوري"
-)
-
-dict_col1, dict_col2 = st.columns(2)
-
-with dict_col1:
-
-    word_to_find = st.text_input(
-        "ابحث عن كلمة أو مصطلح:",
-        placeholder="président / réunion / gouvernement..."
+    st.write(
+        "🟢 مفتاح Gemini موجود"
+        if GEMINI_API_KEY
+        else "⚪ مفتاح Gemini غير مضبوط"
     )
 
-with dict_col2:
-
-    st.markdown("**النتيجة:**")
-
-    if word_to_find.strip():
-
-        query = normalize_text(
-            word_to_find
-        )
-
-        found = None
-
-        for term in terminology:
-
-            if normalize_text(
-                term["source"]
-            ) == query:
-
-                found = term
-                break
-
-        if found:
-
-            st.success(
-                found["target"]
-            )
-
-            st.caption(
-                f"مصدر المصطلح: {found.get('origin', 'Tasuqilt')}"
-            )
-
-        else:
-
-            st.info(
-                "هذا المصطلح غير موجود في قاعدة Tasuqilt."
-            )
+    if GEMINI_API_KEY:
+        st.caption(f"النموذج: {GEMINI_MODEL}")
 
 
-st.markdown("---")
+with st.spinner("تحميل ذاكرة الترجمة والمصطلحات..."):
+    knowledge = load_knowledge()
 
 
-# ============================================================
-# 23. MAIN TRANSLATOR
-# ============================================================
-
-st.markdown(
-    "### 📰 Traducteur de Dépêches / مترجم البرقيات الإعلامية"
-)
-
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
-
-    text_to_translate = st.text_area(
-        "النص المصدر:",
-        height=280,
-        placeholder=(
-            "أدخل النص الفرنسي أو العربي هنا..."
-            if "Auto-Detect" in direction
-            else
-            "أدخل نص Tamazight باللاتينية هنا..."
+    if knowledge["connected"]:
+        st.success(
+            f"GitHub متصل — الفرع: {knowledge['branch']}"
         )
-    )
-
-    submit_button = st.button(
-        "🚀 ترجم",
-        type="primary",
-        use_container_width=True
-    )
-
-
-# ============================================================
-# 24. TRANSLATION PIPELINE
-# ============================================================
-
-if submit_button:
-
-    if not text_to_translate.strip():
-
-        st.warning(
-            "أدخل نصاً أولاً."
-        )
-
     else:
+        st.error("تعذّر الاتصال بـ GitHub")
 
-        source_text = text_to_translate.strip()
+with col2:
+    st.metric(
+        "أزواج ذاكرة الترجمة",
+        f"{len(knowledge['pairs']):,}",
+    )
 
-        # ----------------------------------------------------
-        # STEP 1 — RETRIEVE FROM Tasuqilt
-        # ----------------------------------------------------
+with col3:
+    st.metric(
+        "المصطلحات المعيارية",
+        f"{len(knowledge['terminology']):,}",
+    )
 
-        with st.spinner(
-            "🔎 البحث في قاعدة Tasuqilt..."
-        ):
 
-            retrieval = retrieve_context(
-                source_text,
-                knowledge,
-                terminology,
-                direction
-            )
+if knowledge["errors"]:
+    with st.expander(
+        f"تفاصيل التحميل ({len(knowledge['errors'])})",
+        expanded=True,
+    ):
+        for error in knowledge["errors"]:
+            st.warning(error)
 
-        st.session_state[
-            "last_retrieval"
-        ] = retrieval
 
-        confidence = calculate_confidence(
-            retrieval
+with st.expander("الملفات التي عثر عليها التطبيق"):
+    if not knowledge["files"]:
+        st.info(
+            "لم يعثر التطبيق على ملفات بيانات مدعومة في جذر المستودع."
         )
+    else:
+        for filename, info in knowledge["files"].items():
+            if "error" in info:
+                st.write(f"❌ {filename}: {info['error']}")
+            else:
+                size_kb = info.get("size", 0) / 1024
+                st.write(
+                    f"📄 {filename} — {size_kb:.1f} KB"
+                )
 
-        # ----------------------------------------------------
-        # STEP 2 — EXACT LOCAL MATCH
-        # ----------------------------------------------------
 
+# ============================================================
+# 14. TRANSLATION INTERFACE
+# ============================================================
+
+st.divider()
+
+st.subheader("الترجمة")
+
+direction = st.selectbox(
+    "اتجاه الترجمة",
+    list(DIRECTIONS.keys()),
+)
+
+source_text = st.text_area(
+    "النص المراد ترجمته",
+    height=220,
+    placeholder="ألصق النص هنا...",
+)
+
+translate_button = st.button(
+    "ترجم النص",
+    type="primary",
+    use_container_width=True,
+)
+
+
+if translate_button:
+    if not source_text.strip():
+        st.warning("أدخل النص الذي تريد ترجمته أولًا.")
+
+    elif engine_choice.startswith("Tasuqilt Local"):
         local_result = exact_local_translation(
             source_text,
+            direction,
             knowledge,
-            direction
         )
 
         if local_result:
+            st.success("مطابقة تامة في قاعدة البيانات")
 
-            output_text = local_result
-
-            validation = {
-                "valid": True,
-                "warnings": [],
-                "checked": 0,
-                "missing": []
-            }
-
-            engine_used = (
-                "Tasuqilt Translation Memory"
+            st.text_area(
+                "الترجمة",
+                value=local_result,
+                height=220,
             )
 
-            st.session_state[
-                "last_translation"
-            ] = output_text
+            st.caption(
+                "النتيجة مسترجعة من ذاكرة الترجمة أو المصطلحات، "
+                "وليست ترجمة مولّدة."
+            )
 
-        # ----------------------------------------------------
-        # STEP 3 — GEMINI ONLY IF NECESSARY
-        # ----------------------------------------------------
+        else:
+            st.info(
+                "لم نعثر على مطابقة تامة لهذا النص في قاعدة البيانات. "
+                "لم يُنشئ الوضع المحلي ترجمة تخمينية."
+            )
 
-        elif engine_choice == "Gemini Free":
-
-            with st.spinner(
-                "🤖 لا توجد مطابقة كاملة — "
-                "إرسال السياق المرتبط فقط إلى Gemini..."
-            ):
-
-                output_text, error_message = (
-                    translate_with_gemini(
-                        source_text,
-                        direction,
-                        retrieval
-                    )
-                )
-
-            if error_message:
-
-                st.error(
-                    error_message
-                )
-
-                output_text = ""
-
-                engine_used = "Gemini"
-
-                validation = {
-                    "valid": False,
-                    "warnings": [error_message],
-                    "checked": 0,
-                    "missing": []
-                }
-
-            else:
-
-                engine_used = (
-                    "Gemini Free + Tasuqilt Retrieval"
-                )
-
-                # ------------------------------------------------
-                # STEP 4 — VALIDATE
-                # ------------------------------------------------
-
-                validation = validate_translation(
+            if direction in {
+                "Français → Tamazight",
+                "Tamazight → Français",
+            }:
+                examples = retrieve_context(
                     source_text,
-                    output_text,
-                    retrieval,
-                    direction
+                    direction,
+                    knowledge,
+                    limit=3,
                 )
 
-                if not validation["valid"]:
+                if examples:
+                    st.markdown("**أمثلة قريبة من ذاكرة الترجمة**")
 
-                    output_text = ""
-
-                    st.error(
-                        "⛔ لم تعتمد Tasuqilt الترجمة."
-                    )
-
-                    for warning in validation[
-                        "warnings"
-                    ]:
-
-                        st.warning(
-                            warning
+                    for example in examples:
+                        st.write(
+                            f"**{example['source']}**"
+                        )
+                        st.write(example["target"])
+                        st.caption(
+                            f"درجة التشابه التقريبية: "
+                            f"{example['score']:.2f}"
                         )
 
-        # ----------------------------------------------------
-        # STEP 5 — LOCAL ONLY WHEN NO GEMINI
-        # ----------------------------------------------------
+            st.caption(
+                "يمكنك اختيار محرك Gemini إذا أردت ترجمة مولّدة "
+                "بالذكاء الاصطناعي."
+            )
+
+    else:
+        if not GEMINI_API_KEY:
+            st.error(
+                "لا يمكن تشغيل Gemini لأن مفتاح API غير مضبوط. "
+                "أضف GEMINI_API_KEY إلى Streamlit Secrets."
+            )
 
         else:
-
-            output_text = ""
-
-            engine_used = (
-                "Tasuqilt Local"
-            )
-
-            validation = {
-                "valid": False,
-                "warnings": [
-                    "لا توجد مطابقة كاملة في قاعدة Tasuqilt."
-                ],
-                "checked": 0,
-                "missing": []
-            }
-
-            st.info(
-                "وضع Tasuqilt Local لا يخترع ترجمة. "
-                "أضف الجملة إلى Translation Memory "
-                "أو فعّل Gemini Free."
-            )
-
-
-        # ----------------------------------------------------
-        # STEP 6 — DISPLAY RESULT
-        # ----------------------------------------------------
-
-        with col2:
-
-            if output_text:
-
-                st.markdown(
-                    "**الترجمة المعتمدة:**"
-                )
-
-                st.success(
-                    output_text
-                )
-
-                st.text_area(
-                    "النتيجة القابلة للنسخ:",
-                    value=output_text,
-                    height=280
-                )
-
-                st.caption(
-                    f"⚙️ المحرك: {engine_used}"
-                )
-
-                # Confidence
-                if confidence >= 90:
-
-                    st.success(
-                        f"🟢 اعتماد قاعدة Tasuqilt: "
-                        f"{confidence}%"
-                    )
-
-                elif confidence >= 60:
-
-                    st.warning(
-                        f"🟡 اعتماد قاعدة Tasuqilt: "
-                        f"{confidence}%"
-                    )
-
-                else:
-
-                    st.info(
-                        f"🔵 اعتماد قاعدة Tasuqilt: "
-                        f"{confidence}%"
-                    )
-
-            else:
-
-                st.text_area(
-                    "النتيجة:",
-                    value="",
-                    height=280,
-                    disabled=True
-                )
-
-
-# ============================================================
-# 25. RETRIEVAL INFORMATION
-# ============================================================
-
-if st.session_state.get(
-    "last_retrieval"
-):
-
-    retrieval = st.session_state[
-        "last_retrieval"
-    ]
-
-    with st.expander(
-        "🔎 عرض ما وجده Tasuqilt قبل الترجمة"
-    ):
-
-        terms = retrieval.get(
-            "terms", []
-        )
-
-        matches = retrieval.get(
-            "tm_matches", []
-        )
-
-        if terms:
-
-            st.markdown(
-                "#### 📚 المصطلحات الرسمية"
-            )
-
-            for term in terms:
-
-                st.write(
-                    f"**{term['source']}** → "
-                    f"**{term['target']}**"
-                )
-
-        else:
-
-            st.write(
-                "لم يجد مصطلحات رسمية مطابقة."
-            )
-
-        if matches:
-
-            st.markdown(
-                "#### 🧠 أمثلة Translation Memory"
-            )
-
-            for pair in matches:
-
-                st.write(
-                    f"**Original:** {pair['source']}"
-                )
-
-                st.write(
-                    f"**Tamazight:** {pair['target']}"
-                )
-
-                st.caption(
-                    f"درجة التشابه: "
-                    f"{round(pair['score'] * 100)}%"
-                )
-
-                st.markdown("---")
-
-        else:
-
-            st.write(
-                "لم يجد أمثلة Translation Memory قريبة."
-            )
-
-
-# ============================================================
-# 26. FOOTER
-# ============================================================
-
-st.markdown("---")
-
-st.caption(
-    "Tasuqilt DZ — نظام ترجمة يعتمد على قاعدة المصطلحات "
-    "وذاكرة الترجمة الخاصة بالمشروع قبل استخدام الذكاء الاصطناعي."
-)
+            with st.spinner("جارٍ إعداد الترجمة..."):
+                try:
